@@ -1,0 +1,886 @@
+<!DOCTYPE html>
+<!-- Index.html -->
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Image Resizer & Padder</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; min-height: 100vh; overflow-x: hidden; }
+    body {
+      font-family: "Google Sans", Arial, sans-serif;
+      background: #f8f9fa;
+      color: #202124;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.12);
+      padding: 32px;
+      width: 100%;
+      max-width: 600px;
+    }
+    h1 { font-size: 22px; font-weight: 600; margin-bottom: 6px; }
+    .subtitle { font-size: 13px; color: #5f6368; margin-bottom: 24px; }
+    .section-label {
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.06em; color: #80868b; margin-bottom: 10px; margin-top: 22px;
+    }
+    hr { border: none; border-top: 1px solid #f1f3f4; margin: 20px 0; }
+
+    /* Mode toggle */
+    .mode-toggle {
+      display: flex; gap: 0; margin-bottom: 20px;
+      border: 1px solid #dadce0; border-radius: 8px; overflow: hidden;
+    }
+    .mode-btn {
+      flex: 1; padding: 9px 16px; font-size: 13px; font-weight: 500;
+      border: none; background: #fff; cursor: pointer; color: #5f6368;
+      transition: background 0.15s, color 0.15s;
+    }
+    .mode-btn:first-child { border-right: 1px solid #dadce0; }
+    .mode-btn.active { background: #1a73e8; color: #fff; }
+
+    .drop-zone {
+      border: 2px dashed #dadce0; border-radius: 8px; padding: 28px 20px;
+      text-align: center; cursor: pointer; transition: border-color 0.2s, background 0.2s;
+    }
+    .drop-zone:hover, .drop-zone.drag-over { border-color: #1a73e8; background: #e8f0fe; }
+    .drop-zone input { display: none; }
+    .drop-zone p { font-size: 14px; color: #5f6368; }
+    .drop-zone strong { color: #1a73e8; }
+    #fileInfo { margin-top: 6px; font-size: 12px; color: #80868b; }
+
+    /* Bulk queue */
+    .bulk-queue { margin-top: 12px; display: none; }
+    .bulk-queue-header {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 12px; color: #5f6368; margin-bottom: 6px;
+    }
+    .bulk-queue-list {
+      max-height: 180px; overflow-y: auto;
+      border: 1px solid #f1f3f4; border-radius: 6px;
+    }
+    .queue-item {
+      display: flex; align-items: center; padding: 7px 10px; font-size: 12px;
+      border-bottom: 1px solid #f1f3f4; gap: 8px;
+    }
+    .queue-item:last-child { border-bottom: none; }
+    .queue-item-icon { font-size: 14px; flex-shrink: 0; }
+    .queue-item-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #3c4043; }
+    .queue-item-size { color: #9aa0a6; flex-shrink: 0; }
+    .queue-item-status {
+      font-size: 11px; font-weight: 600; flex-shrink: 0; min-width: 58px; text-align: right;
+    }
+    .queue-item-status.pending  { color: #9aa0a6; }
+    .queue-item-status.active   { color: #1a73e8; }
+    .queue-item-status.done     { color: #137333; }
+    .queue-item-status.error    { color: #c5221f; }
+    .queue-item-remove {
+      background: none; border: none; cursor: pointer; color: #9aa0a6;
+      font-size: 16px; line-height: 1; padding: 0 2px; flex-shrink: 0;
+    }
+    .queue-item-remove:hover { color: #c5221f; }
+
+    .dim-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+    .preset-btn {
+      padding: 6px 12px; border-radius: 20px; border: 1px solid #dadce0;
+      background: #fff; font-size: 12px; font-weight: 500; cursor: pointer;
+      color: #3c4043; transition: all 0.15s; line-height: 1.4; text-align: center;
+    }
+    .preset-btn:hover { border-color: #1a73e8; color: #1a73e8; background: #e8f0fe; }
+    .preset-btn.active { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+    .preset-btn small { display: block; font-size: 10px; opacity: 0.75; }
+
+    .dim-inputs {
+      display: grid; grid-template-columns: 1fr 28px 1fr;
+      gap: 8px; align-items: end; margin-bottom: 10px;
+    }
+    .dim-group label { font-size: 12px; font-weight: 500; color: #3c4043; display: block; margin-bottom: 4px; }
+    .dim-group input {
+      width: 100%; padding: 10px; border: 1px solid #dadce0; border-radius: 6px;
+      font-size: 16px; font-weight: 600; text-align: center; outline: none; transition: border-color 0.2s;
+    }
+    .dim-group input:focus { border-color: #1a73e8; }
+    .x-label { text-align: center; font-size: 18px; font-weight: 300; color: #80868b; padding-bottom: 10px; }
+
+    .lock-row {
+      display: flex; align-items: center; gap: 8px; font-size: 13px;
+      color: #5f6368; cursor: pointer; user-select: none; margin-bottom: 10px;
+    }
+    .lock-row input[type="checkbox"] { cursor: pointer; width: 15px; height: 15px; }
+
+    .fit-info {
+      font-size: 12px; color: #5f6368; background: #f8f9fa;
+      border-radius: 6px; padding: 9px 12px; display: none; line-height: 1.5;
+    }
+
+    .options { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    label { font-size: 13px; font-weight: 500; display: block; margin-bottom: 4px; color: #3c4043; }
+    select, input[type="text"], input[type="number"] {
+      width: 100%; padding: 8px 10px; border: 1px solid #dadce0;
+      border-radius: 6px; font-size: 14px; outline: none; transition: border-color 0.2s;
+    }
+    select:focus, input[type="text"]:focus, input[type="number"]:focus { border-color: #1a73e8; }
+    .color-row { display: flex; gap: 8px; align-items: center; }
+    .color-row input[type="color"] {
+      width: 36px; height: 36px; border: 1px solid #dadce0; border-radius: 6px;
+      padding: 2px; cursor: pointer; flex-shrink: 0;
+    }
+
+    /* Progress */
+    .progress-wrap { display: none; margin: 20px 0 0; }
+    .progress-wrap.visible { display: block; }
+    .progress-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .progress-step-label { font-size: 13px; font-weight: 500; color: #3c4043; }
+    .progress-pct { font-size: 13px; font-weight: 600; color: #1a73e8; min-width: 36px; text-align: right; }
+    .progress-track { width: 100%; height: 6px; background: #e8eaed; border-radius: 99px; overflow: hidden; margin-bottom: 10px; }
+    .progress-bar { height: 100%; width: 0%; background: #1a73e8; border-radius: 99px; transition: width 0.35s cubic-bezier(0.4,0,0.2,1); }
+    .progress-bar.done { background: #137333; }
+    .progress-steps { display: flex; justify-content: space-between; }
+    .step-dot { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; }
+    .step-dot-circle { width: 10px; height: 10px; border-radius: 50%; background: #e8eaed; border: 2px solid #e8eaed; transition: background 0.25s, border-color 0.25s; }
+    .step-dot.active .step-dot-circle { background: #fff; border-color: #1a73e8; box-shadow: 0 0 0 3px rgba(26,115,232,0.18); }
+    .step-dot.complete .step-dot-circle { background: #1a73e8; border-color: #1a73e8; }
+    .step-dot.done .step-dot-circle { background: #137333; border-color: #137333; }
+    .step-dot-name { font-size: 10px; color: #9aa0a6; text-align: center; white-space: nowrap; }
+    .step-dot.active .step-dot-name, .step-dot.complete .step-dot-name { color: #1a73e8; }
+    .step-dot.done .step-dot-name { color: #137333; }
+
+    /* Bulk overall progress bar */
+    .bulk-overall {
+      display: none; margin-top: 14px;
+      background: #f8f9fa; border-radius: 8px; padding: 12px 14px;
+    }
+    .bulk-overall.visible { display: block; }
+    .bulk-overall-header { display: flex; justify-content: space-between; font-size: 13px; font-weight: 500; color: #3c4043; margin-bottom: 8px; }
+    .bulk-overall-track { width: 100%; height: 8px; background: #e8eaed; border-radius: 99px; overflow: hidden; }
+    .bulk-overall-bar { height: 100%; width: 0%; background: #1a73e8; border-radius: 99px; transition: width 0.4s cubic-bezier(0.4,0,0.2,1); }
+    .bulk-overall-bar.done { background: #137333; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px; padding: 10px 20px;
+      border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer;
+      border: none; transition: background 0.15s, opacity 0.15s;
+    }
+    .btn-primary { background: #1a73e8; color: #fff; }
+    .btn-primary:hover { background: #1557b0; }
+    .btn-secondary { background: #e8f0fe; color: #1a73e8; }
+    .btn-secondary:hover { background: #d2e3fc; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+    .preview-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .preview-box { text-align: center; }
+    .preview-box span { font-size: 11px; color: #5f6368; display: block; margin-bottom: 4px; }
+    .preview-box img {
+      width: 100%; border-radius: 6px; border: 1px solid #dadce0; display: block;
+      background-image: linear-gradient(45deg,#e0e0e0 25%,transparent 25%),
+                        linear-gradient(-45deg,#e0e0e0 25%,transparent 25%),
+                        linear-gradient(45deg,transparent 75%,#e0e0e0 75%),
+                        linear-gradient(-45deg,transparent 75%,#e0e0e0 75%);
+      background-size: 12px 12px; background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+    }
+    canvas { display: none; }
+
+    .status { margin-top: 14px; font-size: 13px; padding: 10px 14px; border-radius: 6px; display: none; }
+    .status.info  { background: #e8f0fe; color: #1a73e8; display: block; }
+    .status.ok    { background: #e6f4ea; color: #137333; display: block; }
+    .status.error { background: #fce8e6; color: #c5221f; display: block; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <h1>🖼 Image Resizer & Padder</h1>
+  <p class="subtitle">Set any output dimension — image is scaled to fit and padded. No cropping, no stretching.</p>
+
+  <!-- Mode toggle -->
+  <div class="mode-toggle">
+    <button class="mode-btn active" id="modeSingle" onclick="setMode('single')">Single Image</button>
+    <button class="mode-btn" id="modeBulk" onclick="setMode('bulk')">Bulk Upload</button>
+  </div>
+
+  <!-- ── SINGLE MODE ── -->
+  <div id="singleSection">
+    <p class="section-label">1 · Upload Image</p>
+    <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+      <input type="file" id="fileInput" accept="image/*" onchange="onFileSelected(this.files[0])"/>
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" stroke-width="1.5" style="margin-bottom:8px">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      <p><strong>Click to upload</strong> or drag & drop</p>
+      <p id="fileInfo"></p>
+    </div>
+  </div>
+
+  <!-- ── BULK MODE ── -->
+  <div id="bulkSection" style="display:none">
+    <p class="section-label">1 · Upload Images</p>
+    <div class="drop-zone" id="bulkDropZone" onclick="document.getElementById('bulkFileInput').click()">
+      <input type="file" id="bulkFileInput" accept="image/*" multiple onchange="onBulkFilesSelected(this.files)"/>
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" stroke-width="1.5" style="margin-bottom:8px">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      <p><strong>Click to upload</strong> or drag & drop — select multiple files</p>
+    </div>
+    <div class="bulk-queue" id="bulkQueue">
+      <div class="bulk-queue-header">
+        <span id="bulkQueueCount">0 images queued</span>
+        <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px" onclick="clearQueue()">Clear all</button>
+      </div>
+      <div class="bulk-queue-list" id="bulkQueueList"></div>
+    </div>
+    <div class="bulk-overall" id="bulkOverall">
+      <div class="bulk-overall-header">
+        <span id="bulkOverallLabel">Processing…</span>
+        <span id="bulkOverallPct">0%</span>
+      </div>
+      <div class="bulk-overall-track"><div class="bulk-overall-bar" id="bulkOverallBar"></div></div>
+    </div>
+  </div>
+
+  <hr/>
+
+  <p class="section-label">2 · Output Dimensions</p>
+  <div class="dim-presets">
+    <button class="preset-btn" onclick="applyPreset(1080,1080,this)">1080 × 1080<small>Instagram</small></button>
+    <button class="preset-btn" onclick="applyPreset(1080,1920,this)">1080 × 1920<small>Story / Reel</small></button>
+    <button class="preset-btn" onclick="applyPreset(1200,628,this)">1200 × 628<small>OG / LinkedIn</small></button>
+    <button class="preset-btn" onclick="applyPreset(1500,500,this)">1500 × 500<small>X Header</small></button>
+    <button class="preset-btn" onclick="applyPreset(2560,1440,this)">2560 × 1440<small>2K</small></button>
+    <button class="preset-btn" onclick="applyPreset(3840,2160,this)">3840 × 2160<small>4K UHD</small></button>
+    <button class="preset-btn" onclick="applyPreset(3840,3840,this)">3840 × 3840<small>Max Square</small></button>
+  </div>
+  <div class="dim-inputs">
+    <div class="dim-group">
+      <label for="targetW">Width (px)</label>
+      <input type="number" id="targetW" value="1080" min="1" max="8000" oninput="onDimInput('w')" />
+    </div>
+    <div class="x-label">×</div>
+    <div class="dim-group">
+      <label for="targetH">Height (px)</label>
+      <input type="number" id="targetH" value="1080" min="1" max="8000" oninput="onDimInput('h')" />
+    </div>
+  </div>
+  <label class="lock-row">
+    <input type="checkbox" id="lockSquare" onchange="onLockChange()" />
+    Lock to square (keep W = H)
+  </label>
+  <div class="fit-info" id="fitInfo"></div>
+
+  <hr/>
+
+  <p class="section-label">3 · Background & Format</p>
+  <div class="options">
+    <div>
+      <label>Background</label>
+      <select id="bgMode" onchange="onBgModeChange()">
+        <option value="color">Solid color</option>
+        <option value="transparent">Transparent (PNG)</option>
+        <option value="blur">Blurred fill</option>
+      </select>
+    </div>
+    <div id="colorPickerWrap">
+      <label>Fill color</label>
+      <div class="color-row">
+        <input type="color" id="colorPicker" value="#ffffff" oninput="syncHex()" />
+        <input type="text" id="hexInput" value="#ffffff" maxlength="7" oninput="syncColor()" placeholder="#ffffff" />
+      </div>
+    </div>
+    <div>
+      <label>Output format</label>
+      <select id="outputFormat">
+        <option value="image/png">PNG</option>
+        <option value="image/jpeg">JPEG</option>
+        <option value="image/webp">WebP</option>
+      </select>
+    </div>
+    <div>
+      <label>Quality (JPEG / WebP)</label>
+      <input type="number" id="quality" value="95" min="1" max="100" />
+    </div>
+  </div>
+
+  <hr/>
+
+  <p class="section-label">4 · Save to Drive (optional)</p>
+  <input type="text" id="folderId" placeholder="Drive folder ID — leave blank to save to My Drive root" />
+
+  <hr/>
+
+  <!-- Single actions -->
+  <div id="singleActions" class="actions">
+    <button class="btn btn-primary" id="processBtn" onclick="processImage()" disabled>🖼 Process Image</button>
+    <button class="btn btn-secondary" id="downloadBtn" onclick="downloadResult()" disabled>⬇ Download</button>
+    <button class="btn btn-secondary" id="driveBtn" onclick="saveToDrive()" disabled>☁ Save to Drive</button>
+  </div>
+
+  <!-- Bulk actions -->
+  <div id="bulkActions" class="actions" style="display:none">
+    <button class="btn btn-primary" id="bulkProcessBtn" onclick="processBulk()" disabled>🖼 Process All</button>
+    <button class="btn btn-secondary" id="bulkDownloadBtn" onclick="downloadBulkZip()" disabled>⬇ Download ZIP</button>
+    <button class="btn btn-secondary" id="bulkDriveBtn" onclick="saveBulkToDrive()" disabled>☁ Save All to Drive</button>
+  </div>
+
+  <div class="progress-wrap" id="progressWrap">
+    <hr style="margin-top:18px;"/>
+    <div class="progress-header">
+      <span class="progress-step-label" id="progressLabel">Starting…</span>
+      <span class="progress-pct" id="progressPct">0%</span>
+    </div>
+    <div class="progress-track"><div class="progress-bar" id="progressBar"></div></div>
+    <div class="progress-steps" id="progressSteps"></div>
+  </div>
+
+  <canvas id="canvas"></canvas>
+
+  <div id="previewSection" style="display:none">
+    <hr/>
+    <p class="section-label">Preview</p>
+    <div class="preview-wrap">
+      <div class="preview-box"><span id="origLabel">Original</span><img id="previewOriginal" /></div>
+      <div class="preview-box"><span id="resultLabel">Result</span><img id="previewSquared" /></div>
+    </div>
+  </div>
+
+  <div class="status" id="status"></div>
+</div>
+
+<!-- JSZip for bulk ZIP download -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+<script>
+  // ── State ──────────────────────────────────────────────────────────────────
+  let currentMode = 'single';
+
+  // Single
+  let currentFile = null;
+  let cachedDataUrl = null;
+  let originalWidth = 0, originalHeight = 0;
+  let resultDataUrl = null, resultFileName = null;
+
+  // Bulk
+  let bulkQueue = []; // { file, dataUrl, status:'pending'|'active'|'done'|'error', resultDataUrl, resultFileName }
+  let bulkResults = []; // { dataUrl, fileName } after processing
+
+  // ── Mode switch ────────────────────────────────────────────────────────────
+  function setMode(mode) {
+    currentMode = mode;
+    document.getElementById('modeSingle').classList.toggle('active', mode === 'single');
+    document.getElementById('modeBulk').classList.toggle('active', mode === 'bulk');
+    document.getElementById('singleSection').style.display = mode === 'single' ? '' : 'none';
+    document.getElementById('bulkSection').style.display  = mode === 'bulk'   ? '' : 'none';
+    document.getElementById('singleActions').style.display = mode === 'single' ? '' : 'none';
+    document.getElementById('bulkActions').style.display   = mode === 'bulk'   ? '' : 'none';
+    document.getElementById('previewSection').style.display = 'none';
+    hideProgress();
+    clearStatus();
+  }
+
+  // ── Progress ───────────────────────────────────────────────────────────────
+  const STEPS = [
+    { key: 'load',       label: 'Loading' },
+    { key: 'canvas',     label: 'Canvas' },
+    { key: 'background', label: 'Background' },
+    { key: 'draw',       label: 'Drawing' },
+    { key: 'export',     label: 'Exporting' },
+    { key: 'done',       label: 'Done' },
+  ];
+
+  function buildStepDots() {
+    const c = document.getElementById('progressSteps');
+    c.innerHTML = '';
+    STEPS.forEach(s => {
+      const d = document.createElement('div');
+      d.className = 'step-dot'; d.id = 'dot-' + s.key;
+      d.innerHTML = `<div class="step-dot-circle"></div><span class="step-dot-name">${s.label}</span>`;
+      c.appendChild(d);
+    });
+  }
+
+  function setProgress(stepKey, pct, label) {
+    document.getElementById('progressWrap').classList.add('visible');
+    document.getElementById('progressLabel').textContent = label;
+    document.getElementById('progressPct').textContent = pct + '%';
+    const bar = document.getElementById('progressBar');
+    bar.style.width = pct + '%';
+    bar.classList.toggle('done', pct === 100);
+    const idx = STEPS.findIndex(s => s.key === stepKey);
+    STEPS.forEach((s, i) => {
+      const dot = document.getElementById('dot-' + s.key);
+      if (!dot) return;
+      if (pct === 100) { dot.className = 'step-dot done'; return; }
+      dot.className = 'step-dot' + (i < idx ? ' complete' : i === idx ? ' active' : '');
+    });
+  }
+
+  function hideProgress() { document.getElementById('progressWrap').classList.remove('visible'); }
+  function tick() { return new Promise(r => setTimeout(r, 30)); }
+
+  // ── Read file as DataURL ───────────────────────────────────────────────────
+  function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const r1 = new FileReader();
+      r1.onload = e => resolve(e.target.result);
+      r1.onerror = () => {
+        const r2 = new FileReader();
+        r2.onload = e => {
+          try {
+            const bytes = new Uint8Array(e.target.result);
+            let binary = '';
+            for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+            resolve('data:' + file.type + ';base64,' + btoa(binary));
+          } catch (err) { reject(new Error('ArrayBuffer conversion failed: ' + err.message)); }
+        };
+        r2.onerror = () => reject(new Error('Both FileReader methods failed. Type: ' + file.type));
+        r2.readAsArrayBuffer(file);
+      };
+      r1.readAsDataURL(file);
+    });
+  }
+
+  // ── Single drag & drop ────────────────────────────────────────────────────
+  const dz = document.getElementById('dropZone');
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+  dz.addEventListener('drop', e => {
+    e.preventDefault(); dz.classList.remove('drag-over');
+    if (e.dataTransfer.files[0]) onFileSelected(e.dataTransfer.files[0]);
+  });
+
+  function onFileSelected(file) {
+    if (!file || !file.type.startsWith('image/')) {
+      showStatus('Please select a valid image file.', 'error'); return;
+    }
+    currentFile = file; cachedDataUrl = null; resultDataUrl = null;
+    document.getElementById('processBtn').disabled = true;
+    document.getElementById('downloadBtn').disabled = true;
+    document.getElementById('driveBtn').disabled = true;
+    document.getElementById('previewSection').style.display = 'none';
+    hideProgress();
+    document.getElementById('fileInfo').textContent = file.name + '  ·  ' + (file.size/1024/1024).toFixed(2) + ' MB  ·  Reading…';
+    showStatus('Reading file…', 'info');
+
+    readFileAsDataUrl(file).then(dataUrl => {
+      cachedDataUrl = dataUrl;
+      const probe = new Image();
+      probe.onload = () => {
+        originalWidth = probe.naturalWidth; originalHeight = probe.naturalHeight;
+        document.getElementById('origLabel').textContent = 'Original (' + originalWidth + ' × ' + originalHeight + ')';
+        document.getElementById('fileInfo').textContent = file.name + '  ·  ' + (file.size/1024/1024).toFixed(2) + ' MB  ·  ' + originalWidth + ' × ' + originalHeight + ' px';
+        updateFitInfo();
+        document.getElementById('processBtn').disabled = false;
+        showStatus('"' + file.name + '" ready — set dimensions and click Process.', 'info');
+      };
+      probe.onerror = () => showStatus('File read OK but image could not be decoded.', 'error');
+      probe.src = dataUrl;
+      document.getElementById('previewOriginal').src = dataUrl;
+    }).catch(err => showStatus('Could not read the file — ' + err.message, 'error'));
+  }
+
+  // ── Bulk drag & drop ──────────────────────────────────────────────────────
+  const bdz = document.getElementById('bulkDropZone');
+  bdz.addEventListener('dragover', e => { e.preventDefault(); bdz.classList.add('drag-over'); });
+  bdz.addEventListener('dragleave', () => bdz.classList.remove('drag-over'));
+  bdz.addEventListener('drop', e => {
+    e.preventDefault(); bdz.classList.remove('drag-over');
+    if (e.dataTransfer.files.length) onBulkFilesSelected(e.dataTransfer.files);
+  });
+
+  function onBulkFilesSelected(files) {
+    const arr = Array.from(files).filter(f => f.type.startsWith('image/'));
+    if (!arr.length) { showStatus('No valid image files found.', 'error'); return; }
+
+    arr.forEach(file => {
+      // Avoid duplicates by name+size
+      const exists = bulkQueue.some(q => q.file.name === file.name && q.file.size === file.size);
+      if (!exists) bulkQueue.push({ file, dataUrl: null, status: 'pending', resultDataUrl: null, resultFileName: null });
+    });
+
+    renderBulkQueue();
+    document.getElementById('bulkProcessBtn').disabled = bulkQueue.length === 0;
+    showStatus(bulkQueue.length + ' image' + (bulkQueue.length !== 1 ? 's' : '') + ' queued. Configure settings and click Process All.', 'info');
+  }
+
+  function renderBulkQueue() {
+    const list = document.getElementById('bulkQueueList');
+    const queueEl = document.getElementById('bulkQueue');
+    if (!bulkQueue.length) { queueEl.style.display = 'none'; return; }
+    queueEl.style.display = 'block';
+    document.getElementById('bulkQueueCount').textContent = bulkQueue.length + ' image' + (bulkQueue.length !== 1 ? 's' : '') + ' queued';
+    list.innerHTML = '';
+    bulkQueue.forEach((item, idx) => {
+      const row = document.createElement('div');
+      row.className = 'queue-item'; row.id = 'qitem-' + idx;
+      const icon = item.status === 'done' ? '✅' : item.status === 'error' ? '❌' : item.status === 'active' ? '⏳' : '🖼';
+      const statusLabel = item.status === 'pending' ? 'Pending' : item.status === 'active' ? 'Processing…' : item.status === 'done' ? 'Done' : 'Error';
+      row.innerHTML = `
+        <span class="queue-item-icon">${icon}</span>
+        <span class="queue-item-name" title="${item.file.name}">${item.file.name}</span>
+        <span class="queue-item-size">${(item.file.size/1024/1024).toFixed(2)} MB</span>
+        <span class="queue-item-status ${item.status}">${statusLabel}</span>
+        ${item.status === 'pending' ? `<button class="queue-item-remove" onclick="removeFromQueue(${idx})" title="Remove">×</button>` : '<span style="width:22px"></span>'}
+      `;
+      list.appendChild(row);
+    });
+  }
+
+  function removeFromQueue(idx) {
+    bulkQueue.splice(idx, 1);
+    renderBulkQueue();
+    document.getElementById('bulkProcessBtn').disabled = bulkQueue.length === 0;
+    if (!bulkQueue.length) clearStatus();
+  }
+
+  function clearQueue() {
+    bulkQueue = []; bulkResults = [];
+    renderBulkQueue();
+    document.getElementById('bulkProcessBtn').disabled = true;
+    document.getElementById('bulkDownloadBtn').disabled = true;
+    document.getElementById('bulkDriveBtn').disabled = true;
+    document.getElementById('bulkOverall').classList.remove('visible');
+    clearStatus();
+  }
+
+  // ── Core render: one image → dataURL ─────────────────────────────────────
+  async function renderOneImage(file, dataUrl) {
+    const tw = parseInt(document.getElementById('targetW').value);
+    const th = parseInt(document.getElementById('targetH').value);
+    const bgMode = document.getElementById('bgMode').value;
+    const format = document.getElementById('outputFormat').value;
+    const quality = parseInt(document.getElementById('quality').value) / 100;
+
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('Image element failed to render for ' + file.name));
+      i.src = dataUrl;
+    });
+
+    const w = img.naturalWidth, h = img.naturalHeight;
+    const scale = Math.min(tw / w, th / h);
+    const fw = Math.round(w * scale), fh = Math.round(h * scale);
+    const ox = Math.floor((tw - fw) / 2), oy = Math.floor((th - fh) / 2);
+
+    const canvas = document.getElementById('canvas');
+    canvas.width = tw; canvas.height = th;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, tw, th);
+
+    if (bgMode === 'blur') {
+      ctx.save(); ctx.filter = 'blur(28px)';
+      const bgScale = Math.max(tw / w, th / h);
+      ctx.drawImage(img, (tw - w*bgScale)/2, (th - h*bgScale)/2, w*bgScale, h*bgScale);
+      ctx.restore();
+      ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(0,0,tw,th);
+    } else if (bgMode === 'color') {
+      ctx.fillStyle = document.getElementById('hexInput').value || '#ffffff';
+      ctx.fillRect(0,0,tw,th);
+    }
+    ctx.drawImage(img, ox, oy, fw, fh);
+
+    const activeFormat = bgMode === 'transparent' ? 'image/png' : format;
+    const ext = activeFormat === 'image/jpeg' ? 'jpg' : activeFormat === 'image/webp' ? 'webp' : 'png';
+    const base = file.name.replace(/\.[^.]+$/, '');
+    const tw2 = parseInt(document.getElementById('targetW').value);
+    const th2 = parseInt(document.getElementById('targetH').value);
+    const fileName = base + '_' + tw2 + 'x' + th2 + '.' + ext;
+    const outDataUrl = canvas.toDataURL(activeFormat, quality);
+    return { dataUrl: outDataUrl, fileName };
+  }
+
+  // ── Presets ────────────────────────────────────────────────────────────────
+  function applyPreset(w, h, btn) {
+    document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('targetW').value = w;
+    document.getElementById('targetH').value = h;
+    document.getElementById('lockSquare').checked = (w === h);
+    updateFitInfo();
+  }
+
+  function onDimInput(changed) {
+    document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+    if (document.getElementById('lockSquare').checked) {
+      const val = parseInt(document.getElementById(changed === 'w' ? 'targetW' : 'targetH').value) || 0;
+      document.getElementById('targetW').value = val;
+      document.getElementById('targetH').value = val;
+    }
+    updateFitInfo();
+  }
+
+  function onLockChange() {
+    if (document.getElementById('lockSquare').checked) {
+      const w = parseInt(document.getElementById('targetW').value) || 1080;
+      document.getElementById('targetH').value = w;
+      updateFitInfo();
+    }
+  }
+
+  function updateFitInfo() {
+    const tw = parseInt(document.getElementById('targetW').value) || 0;
+    const th = parseInt(document.getElementById('targetH').value) || 0;
+    const info = document.getElementById('fitInfo');
+    if (!tw || !th || !originalWidth || !originalHeight) { info.style.display = 'none'; return; }
+    const scale = Math.min(tw / originalWidth, th / originalHeight);
+    const fw = Math.round(originalWidth * scale), fh = Math.round(originalHeight * scale);
+    info.style.display = 'block';
+    info.innerHTML = 'Image will be scaled to <strong>' + fw + ' × ' + fh + ' px</strong> and centered — padding <strong>' + Math.floor((tw-fw)/2) + ' px</strong> left/right, <strong>' + Math.floor((th-fh)/2) + ' px</strong> top/bottom.';
+  }
+
+  // ── Color picker ───────────────────────────────────────────────────────────
+  function syncHex() { document.getElementById('hexInput').value = document.getElementById('colorPicker').value; }
+  function syncColor() {
+    const hex = document.getElementById('hexInput').value;
+    if (/^#[0-9a-fA-F]{6}$/.test(hex)) document.getElementById('colorPicker').value = hex;
+  }
+  function onBgModeChange() {
+    const show = document.getElementById('bgMode').value === 'color';
+    document.getElementById('colorPickerWrap').style.opacity = show ? '1' : '0.4';
+    document.getElementById('colorPickerWrap').style.pointerEvents = show ? 'auto' : 'none';
+  }
+
+  // ── Single: Process ────────────────────────────────────────────────────────
+  async function processImage() {
+    if (!currentFile || !cachedDataUrl) { showStatus('No image ready — please upload a file first.', 'error'); return; }
+    const tw = parseInt(document.getElementById('targetW').value);
+    const th = parseInt(document.getElementById('targetH').value);
+    if (!tw || !th || tw < 1 || th < 1) { showStatus('Enter valid width and height.', 'error'); return; }
+    if (tw > 8000 || th > 8000) { showStatus('Max dimension is 8000 px.', 'error'); return; }
+
+    document.getElementById('processBtn').disabled = true;
+    document.getElementById('downloadBtn').disabled = true;
+    document.getElementById('driveBtn').disabled = true;
+    document.getElementById('previewSection').style.display = 'none';
+    document.getElementById('status').className = 'status';
+    buildStepDots();
+
+    setProgress('load', 10, 'Loading image…'); await tick();
+
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('Image element failed to render'));
+      i.src = cachedDataUrl;
+    }).catch(err => { showStatus('Failed to render image: ' + err.message, 'error'); document.getElementById('processBtn').disabled = false; return null; });
+    if (!img) return;
+
+    const w = img.naturalWidth, h = img.naturalHeight;
+    const bgMode = document.getElementById('bgMode').value;
+    const format = document.getElementById('outputFormat').value;
+    const quality = parseInt(document.getElementById('quality').value) / 100;
+    const scale = Math.min(tw / w, th / h);
+    const fw = Math.round(w * scale), fh = Math.round(h * scale);
+    const ox = Math.floor((tw - fw) / 2), oy = Math.floor((th - fh) / 2);
+
+    setProgress('canvas', 25, 'Creating canvas…'); await tick();
+    const canvas = document.getElementById('canvas');
+    canvas.width = tw; canvas.height = th;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, tw, th);
+
+    setProgress('background', 45, 'Rendering background…'); await tick();
+    if (bgMode === 'blur') {
+      ctx.save(); ctx.filter = 'blur(28px)';
+      const bgScale = Math.max(tw / w, th / h);
+      ctx.drawImage(img, (tw - w*bgScale)/2, (th - h*bgScale)/2, w*bgScale, h*bgScale);
+      ctx.restore();
+      ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(0,0,tw,th);
+    } else if (bgMode === 'color') {
+      ctx.fillStyle = document.getElementById('hexInput').value || '#ffffff';
+      ctx.fillRect(0,0,tw,th);
+    }
+
+    setProgress('draw', 68, 'Drawing image…'); await tick();
+    ctx.drawImage(img, ox, oy, fw, fh);
+
+    setProgress('export', 85, 'Exporting…'); await tick();
+    const activeFormat = bgMode === 'transparent' ? 'image/png' : format;
+    const ext = activeFormat === 'image/jpeg' ? 'jpg' : activeFormat === 'image/webp' ? 'webp' : 'png';
+    const base = currentFile.name.replace(/\.[^.]+$/, '');
+    resultFileName = base + '_' + tw + 'x' + th + '.' + ext;
+    resultDataUrl = canvas.toDataURL(activeFormat, quality);
+
+    setProgress('done', 100, 'Done!'); await tick();
+    document.getElementById('previewSquared').src = resultDataUrl;
+    document.getElementById('resultLabel').textContent = 'Result (' + tw + ' × ' + th + ')';
+    document.getElementById('previewSection').style.display = 'block';
+    document.getElementById('processBtn').disabled = false;
+    document.getElementById('downloadBtn').disabled = false;
+    document.getElementById('driveBtn').disabled = false;
+    showStatus('✅ Done — ' + tw + ' × ' + th + ' px · ' + resultFileName, 'ok');
+  }
+
+  // ── Bulk: Process all ─────────────────────────────────────────────────────
+  async function processBulk() {
+    if (!bulkQueue.length) { showStatus('No images in queue.', 'error'); return; }
+    const tw = parseInt(document.getElementById('targetW').value);
+    const th = parseInt(document.getElementById('targetH').value);
+    if (!tw || !th || tw < 1 || th < 1) { showStatus('Enter valid width and height.', 'error'); return; }
+    if (tw > 8000 || th > 8000) { showStatus('Max dimension is 8000 px.', 'error'); return; }
+
+    document.getElementById('bulkProcessBtn').disabled = true;
+    document.getElementById('bulkDownloadBtn').disabled = true;
+    document.getElementById('bulkDriveBtn').disabled = true;
+    bulkResults = [];
+
+    const overall = document.getElementById('bulkOverall');
+    const overallBar = document.getElementById('bulkOverallBar');
+    const overallLabel = document.getElementById('bulkOverallLabel');
+    const overallPct = document.getElementById('bulkOverallPct');
+    overall.classList.add('visible');
+    overallBar.classList.remove('done');
+
+    // Reset all to pending
+    bulkQueue.forEach(item => { item.status = 'pending'; item.resultDataUrl = null; item.resultFileName = null; });
+    renderBulkQueue();
+
+    let doneCount = 0;
+    for (let idx = 0; idx < bulkQueue.length; idx++) {
+      const item = bulkQueue[idx];
+      item.status = 'active';
+      renderBulkQueue();
+      overallLabel.textContent = 'Processing ' + (idx + 1) + ' of ' + bulkQueue.length + ' — ' + item.file.name;
+      const pct = Math.round((idx / bulkQueue.length) * 100);
+      overallBar.style.width = pct + '%';
+      overallPct.textContent = pct + '%';
+
+      // Scroll active item into view in the queue
+      const rowEl = document.getElementById('qitem-' + idx);
+      if (rowEl) rowEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+
+      try {
+        // Read file if not cached
+        if (!item.dataUrl) {
+          item.dataUrl = await readFileAsDataUrl(item.file);
+        }
+        const { dataUrl, fileName } = await renderOneImage(item.file, item.dataUrl);
+        item.resultDataUrl = dataUrl;
+        item.resultFileName = fileName;
+        item.status = 'done';
+        bulkResults.push({ dataUrl, fileName });
+        doneCount++;
+      } catch (err) {
+        item.status = 'error';
+        console.error('Error processing ' + item.file.name + ':', err);
+      }
+
+      renderBulkQueue();
+      await tick();
+    }
+
+    overallBar.style.width = '100%';
+    overallPct.textContent = '100%';
+    overallBar.classList.add('done');
+    overallLabel.textContent = '✅ Complete — ' + doneCount + ' of ' + bulkQueue.length + ' processed';
+
+    document.getElementById('bulkProcessBtn').disabled = false;
+    if (bulkResults.length > 0) {
+      document.getElementById('bulkDownloadBtn').disabled = false;
+      document.getElementById('bulkDriveBtn').disabled = false;
+    }
+
+    const errors = bulkQueue.length - doneCount;
+    if (errors > 0) {
+      showStatus('⚠ Done — ' + doneCount + ' succeeded, ' + errors + ' failed. Check console for details.', 'error');
+    } else {
+      showStatus('✅ All ' + doneCount + ' images processed at ' + tw + ' × ' + th + ' px. Ready to download.', 'ok');
+    }
+  }
+
+  // ── Bulk: Download ZIP ─────────────────────────────────────────────────────
+  async function downloadBulkZip() {
+    if (!bulkResults.length) return;
+    showStatus('Building ZIP…', 'info');
+    document.getElementById('bulkDownloadBtn').disabled = true;
+
+    try {
+      const zip = new JSZip();
+      bulkResults.forEach(({ dataUrl, fileName }) => {
+        const base64 = dataUrl.split(',')[1];
+        zip.file(fileName, base64, { base64: true });
+      });
+      const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+      const tw = parseInt(document.getElementById('targetW').value);
+      const th = parseInt(document.getElementById('targetH').value);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'resized_' + tw + 'x' + th + '_' + bulkResults.length + 'images.zip'; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      showStatus('✅ ZIP downloaded with ' + bulkResults.length + ' images.', 'ok');
+    } catch (err) {
+      showStatus('ZIP error: ' + err.message, 'error');
+    }
+    document.getElementById('bulkDownloadBtn').disabled = false;
+  }
+
+  // ── Bulk: Save all to Drive ───────────────────────────────────────────────
+  async function saveBulkToDrive() {
+    if (!bulkResults.length) return;
+    document.getElementById('bulkDriveBtn').disabled = true;
+    showStatus('Uploading ' + bulkResults.length + ' images to Google Drive…', 'info');
+
+    let uploaded = 0, failed = 0;
+    for (const { dataUrl, fileName } of bulkResults) {
+      const mimeType = dataUrl.split(';')[0].split(':')[1];
+      const base64 = dataUrl.split(',')[1];
+      const folderId = document.getElementById('folderId').value.trim();
+      await new Promise(resolve => {
+        google.script.run
+          .withSuccessHandler(() => { uploaded++; resolve(); })
+          .withFailureHandler(() => { failed++; resolve(); })
+          .saveImageToDrive(base64, mimeType, fileName, folderId);
+      });
+    }
+
+    document.getElementById('bulkDriveBtn').disabled = false;
+    if (failed > 0) {
+      showStatus('⚠ Drive upload: ' + uploaded + ' succeeded, ' + failed + ' failed.', 'error');
+    } else {
+      showStatus('☁ All ' + uploaded + ' images saved to Google Drive.', 'ok');
+    }
+  }
+
+  // ── Single: Download & Drive ───────────────────────────────────────────────
+  function downloadResult() {
+    if (!resultDataUrl) return;
+    const a = document.createElement('a'); a.href = resultDataUrl; a.download = resultFileName; a.click();
+  }
+
+  function saveToDrive() {
+    if (!resultDataUrl) return;
+    showStatus('Uploading to Google Drive…', 'info');
+    document.getElementById('driveBtn').disabled = true;
+    const mimeType = resultDataUrl.split(';')[0].split(':')[1];
+    const base64 = resultDataUrl.split(',')[1];
+    google.script.run
+      .withSuccessHandler(url => {
+        document.getElementById('driveBtn').disabled = false;
+        showStatus('☁ Saved! <a href="' + url + '" target="_blank" style="color:#137333">Open in Drive ↗</a>', 'ok');
+      })
+      .withFailureHandler(err => {
+        document.getElementById('driveBtn').disabled = false;
+        showStatus('Drive upload failed: ' + err.message, 'error');
+      })
+      .saveImageToDrive(base64, mimeType, resultFileName, document.getElementById('folderId').value.trim());
+  }
+
+  // ── Status ─────────────────────────────────────────────────────────────────
+  function showStatus(msg, type) {
+    const el = document.getElementById('status');
+    el.innerHTML = msg; el.className = 'status ' + type;
+  }
+  function clearStatus() {
+    const el = document.getElementById('status');
+    el.innerHTML = ''; el.className = 'status';
+  }
+</script>
+</body>
+</html>
