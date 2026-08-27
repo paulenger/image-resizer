@@ -90,6 +90,46 @@
     .drop svg{margin-bottom:10px}
     #fileInfo{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);margin-top:10px}
 
+    /* ── Crop ── */
+    .crop{display:none;margin-top:14px;border:1px solid var(--line);border-radius:var(--r);padding:14px}
+    .crop.visible{display:block}
+    .crop-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+    .crop-title{font-size:12.5px;font-weight:500}
+    .crop-tools{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+    .crop-lock{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-2);cursor:pointer;user-select:none}
+    .crop-lock input{width:14px;height:14px;cursor:pointer;accent-color:var(--ink)}
+    .crop-stage{
+      position:relative;display:inline-block;max-width:100%;line-height:0;
+      overflow:hidden;border-radius:6px;touch-action:none;cursor:crosshair;
+      background:#f4f4f2;
+    }
+    .crop-stage img{max-width:100%;max-height:300px;display:block;user-select:none;-webkit-user-drag:none}
+    .crop-box{
+      position:absolute;display:none;box-sizing:border-box;
+      border:1px solid #fff;box-shadow:0 0 0 9999px rgba(20,22,26,.5);
+      cursor:move;
+    }
+    .crop-box::before,.crop-box::after{
+      content:"";position:absolute;inset:0;pointer-events:none;
+      background-image:linear-gradient(to right,transparent 33.33%,rgba(255,255,255,.32) 33.33% 33.5%,transparent 33.5%,transparent 66.66%,rgba(255,255,255,.32) 66.66% 66.83%,transparent 66.83%);
+    }
+    .crop-box::after{
+      background-image:linear-gradient(to bottom,transparent 33.33%,rgba(255,255,255,.32) 33.33% 33.5%,transparent 33.5%,transparent 66.66%,rgba(255,255,255,.32) 66.66% 66.83%,transparent 66.83%);
+    }
+    .crop-h{position:absolute;width:13px;height:13px;background:#fff;border:1px solid rgba(20,22,26,.35);border-radius:2px;z-index:2}
+    .crop-h[data-handle="nw"]{left:-7px;top:-7px;cursor:nwse-resize}
+    .crop-h[data-handle="ne"]{right:-7px;top:-7px;cursor:nesw-resize}
+    .crop-h[data-handle="sw"]{left:-7px;bottom:-7px;cursor:nesw-resize}
+    .crop-h[data-handle="se"]{right:-7px;bottom:-7px;cursor:nwse-resize}
+    .crop-hint{
+      position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+      font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+      background:rgba(20,22,26,.72);color:#fff;padding:6px 12px;border-radius:99px;
+      pointer-events:none;white-space:nowrap;
+    }
+    .crop-read{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);margin-top:11px}
+    .crop-read .v{color:var(--ink);font-weight:500}
+
     /* ── Queue ── */
     .queue{margin-top:14px;display:none}
     .queue-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
@@ -327,6 +367,30 @@
       <p class="drop-hint">PNG, JPEG, WebP, GIF</p>
       <p id="fileInfo"></p>
     </div>
+
+    <div class="crop" id="cropPanel">
+      <div class="crop-head">
+        <span class="crop-title">Crop</span>
+        <div class="crop-tools">
+          <label class="crop-lock">
+            <input type="checkbox" id="cropLock" checked onchange="onCropLockChange()" />
+            Match the output shape
+          </label>
+          <button class="linkbtn" onclick="resetCrop()">Use the whole image</button>
+        </div>
+      </div>
+      <div class="crop-stage" id="cropStage">
+        <img id="cropImg" alt="Image being cropped" draggable="false" />
+        <div class="crop-box" id="cropBox">
+          <div class="crop-h" data-handle="nw"></div>
+          <div class="crop-h" data-handle="ne"></div>
+          <div class="crop-h" data-handle="sw"></div>
+          <div class="crop-h" data-handle="se"></div>
+        </div>
+        <div class="crop-hint" id="cropHint">Drag to crop</div>
+      </div>
+      <div class="crop-read" id="cropRead"></div>
+    </div>
   </div>
 
   <!-- ── BULK ── -->
@@ -435,11 +499,6 @@
     </div>
   </div>
 
-  <!-- ── DRIVE ── -->
-  <div class="sec"><span class="sec-num">04</span><h2>Where to save in Drive</h2><span class="sec-rule"></span></div>
-  <input type="text" id="folderId" placeholder="Paste a Drive folder ID" />
-  <p class="help">Leave this blank to save into the top level of My Drive. Only needed if you use the Drive buttons.</p>
-
   <!-- ── ACTIONS ── -->
   <div id="singleActions" class="actions">
     <button class="btn btn-primary" id="processBtn" onclick="processImage()" disabled>
@@ -449,10 +508,6 @@
     <button class="btn btn-ghost" id="downloadBtn" onclick="downloadResult()" disabled>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       Download
-    </button>
-    <button class="btn btn-ghost" id="driveBtn" onclick="saveToDrive()" disabled>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>
-      Save to Drive
     </button>
   </div>
 
@@ -464,10 +519,6 @@
     <button class="btn btn-ghost" id="bulkDownloadBtn" onclick="downloadBulkZip()" disabled>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       Download ZIP
-    </button>
-    <button class="btn btn-ghost" id="bulkDriveBtn" onclick="saveBulkToDrive()" disabled>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>
-      Save all to Drive
     </button>
   </div>
 
@@ -483,7 +534,7 @@
   <canvas id="canvas"></canvas>
 
   <div id="previewSection" style="display:none">
-    <div class="sec"><span class="sec-num">05</span><h2>Result</h2><span class="sec-rule"></span></div>
+    <div class="sec"><span class="sec-num">04</span><h2>Result</h2><span class="sec-rule"></span></div>
     <div class="previews">
       <div><p class="pv-label" id="origLabel">Original</p><img id="previewOriginal" alt="Original image" /></div>
       <div><p class="pv-label" id="resultLabel">Resized</p><img id="previewSquared" alt="Resized image" /></div>
@@ -519,13 +570,14 @@
   // Samples a thin band around the border of a downscaled copy. A product shot
   // sits on a plain backdrop, so its border pixels are nearly all the same
   // color. A lifestyle photo runs to the edges, so they are not.
-  function analyzeImage(img) {
+  function analyzeImage(img, src) {
     const S = 72, BAND = 4;
+    src = src || { x:0, y:0, w:img.naturalWidth, h:img.naturalHeight };
     const c = document.createElement('canvas');
     c.width = S; c.height = S;
     const x = c.getContext('2d', { willReadFrequently: true });
     x.clearRect(0, 0, S, S);
-    x.drawImage(img, 0, 0, S, S);
+    x.drawImage(img, src.x, src.y, src.w, src.h, 0, 0, S, S);
     let d;
     try { d = x.getImageData(0, 0, S, S).data; }
     catch (e) { return { kind:'product', uniformity:0, transparent:0, edgeHex:'#ffffff', unknown:true }; }
@@ -563,13 +615,14 @@
     return { kind, uniformity, transparent: clear, edgeHex: hex, cutout: false };
   }
 
-  function hasAlpha(img) {
+  function hasAlpha(img, src) {
     const S = 48;
+    src = src || { x:0, y:0, w:img.naturalWidth, h:img.naturalHeight };
     const c = document.createElement('canvas');
     c.width = S; c.height = S;
     const x = c.getContext('2d', { willReadFrequently: true });
     x.clearRect(0, 0, S, S);
-    x.drawImage(img, 0, 0, S, S);
+    x.drawImage(img, src.x, src.y, src.w, src.h, 0, 0, S, S);
     try {
       const d = x.getImageData(0, 0, S, S).data;
       for (let i = 3; i < d.length; i += 4) if (d[i] < 250) return true;
@@ -632,9 +685,9 @@
 
   // ── Progress ───────────────────────────────────────────────────────────────
   const STEPS = [
-    { key:'load', label:'Load' }, { key:'canvas', label:'Canvas' },
-    { key:'background', label:'Fill' }, { key:'draw', label:'Draw' },
-    { key:'export', label:'Export' }, { key:'done', label:'Done' },
+    { key:'load', label:'Load' }, { key:'measure', label:'Measure' },
+    { key:'paint', label:'Paint' }, { key:'export', label:'Export' },
+    { key:'done', label:'Done' },
   ];
   function buildStepDots() {
     const c = $('progressSteps');
@@ -700,9 +753,10 @@
       showStatus('That file is not an image. Pick a PNG, JPEG, WebP, or GIF.', 'error'); return;
     }
     currentFile = file; cachedDataUrl = null; resultDataUrl = null; detectedKind = null;
+    cropRect = null; cropPreviewUrl = null;
+    hideCropPanel();
     $('processBtn').disabled = true;
     $('downloadBtn').disabled = true;
-    $('driveBtn').disabled = true;
     $('previewSection').style.display = 'none';
     hideProgress();
     $('fileInfo').textContent = file.name + '  ·  ' + (file.size/1024/1024).toFixed(2) + ' MB  ·  reading';
@@ -716,9 +770,10 @@
         detectedKind = analyzeImage(probe);
         $('origLabel').textContent = 'Original — ' + originalWidth + ' × ' + originalHeight;
         $('fileInfo').textContent = file.name + '  ·  ' + (file.size/1024/1024).toFixed(2) + ' MB  ·  ' + originalWidth + ' × ' + originalHeight + ' px';
+        showCropPanel();
         updateFitInfo();
         $('processBtn').disabled = false;
-        showStatus(file.name + ' is ready. Set your output size, then resize.', 'info');
+        showStatus(file.name + ' is ready. Drag on the image to crop it, or leave it as is.', 'info');
       };
       probe.onerror = () => showStatus('The file was read but the image could not be decoded. Try re-saving it.', 'error');
       probe.src = dataUrl;
@@ -809,31 +864,214 @@
     renderBulkQueue();
     $('bulkProcessBtn').disabled = true;
     $('bulkDownloadBtn').disabled = true;
-    $('bulkDriveBtn').disabled = true;
     $('bulkOverall').classList.remove('visible');
     clearStatus();
   }
 
   // ── Core render: one image → dataURL ─────────────────────────────────────
-  async function renderOneImage(file, dataUrl, kind) {
-    const tw = parseInt($('targetW').value);
-    const th = parseInt($('targetH').value);
-    const bgMode = $('bgMode').value;
-    const format = $('outputFormat').value;
-    const quality = parseInt($('quality').value) / 100;
+  // ── Crop ───────────────────────────────────────────────────────────────────
+  // cropRect lives in the original image's own pixels, so it survives zooming,
+  // window resizing, and any change to the on-screen preview size.
+  let cropRect = null;
+  let cropPreviewUrl = null;
+  const MIN_CROP = 16;
 
-    const img = await new Promise((resolve, reject) => {
-      const i = new Image();
-      i.onload = () => resolve(i);
-      i.onerror = () => reject(new Error('Image element failed to render for ' + file.name));
-      i.src = dataUrl;
+  function sourceRect() {
+    return cropRect ? { x:cropRect.x, y:cropRect.y, w:cropRect.w, h:cropRect.h }
+                    : { x:0, y:0, w:originalWidth, h:originalHeight };
+  }
+  function cropAspect() {
+    const tw = parseInt($('targetW').value) || 0, th = parseInt($('targetH').value) || 0;
+    return (tw && th) ? tw / th : 0;
+  }
+  function clampRect(r) {
+    r.w = Math.max(MIN_CROP, Math.min(r.w, originalWidth));
+    r.h = Math.max(MIN_CROP, Math.min(r.h, originalHeight));
+    r.x = Math.max(0, Math.min(r.x, originalWidth - r.w));
+    r.y = Math.max(0, Math.min(r.y, originalHeight - r.h));
+    return r;
+  }
+  // Largest box of the given aspect that fits the image, centered on cx, cy.
+  function fitAspect(w, h, ar) {
+    if (!ar) return { w, h };
+    if (w / h > ar) w = h * ar; else h = w / ar;
+    if (w > originalWidth)  { w = originalWidth;  h = w / ar; }
+    if (h > originalHeight) { h = originalHeight; w = h * ar; }
+    return { w, h };
+  }
+
+  function showCropPanel() {
+    $('cropImg').src = cachedDataUrl;
+    $('cropPanel').classList.add('visible');
+    renderCropBox();
+  }
+  function hideCropPanel() { $('cropPanel').classList.remove('visible'); }
+
+  function resetCrop() {
+    cropRect = null; cropPreviewUrl = null;
+    renderCropBox();
+    reanalyzeSource();
+  }
+
+  function onCropLockChange() {
+    if (!cropRect || !$('cropLock').checked) { renderCropBox(); return; }
+    const ar = cropAspect();
+    const cx = cropRect.x + cropRect.w / 2, cy = cropRect.y + cropRect.h / 2;
+    const s = fitAspect(cropRect.w, cropRect.h, ar);
+    cropRect = clampRect({ x: Math.round(cx - s.w/2), y: Math.round(cy - s.h/2), w: Math.round(s.w), h: Math.round(s.h) });
+    renderCropBox();
+    reanalyzeSource();
+  }
+
+  // Output shape changed while the crop is locked to it, so reshape the crop.
+  function refitCropToOutput() {
+    if (!cropRect || !$('cropLock').checked || !originalWidth) return;
+    const ar = cropAspect();
+    if (!ar) return;
+    const cx = cropRect.x + cropRect.w / 2, cy = cropRect.y + cropRect.h / 2;
+    const f = fitAspect(cropRect.w, cropRect.h, ar);
+    cropRect = clampRect({ x: Math.round(cx - f.w/2), y: Math.round(cy - f.h/2), w: Math.round(f.w), h: Math.round(f.h) });
+    renderCropBox();
+  }
+
+  function renderCropBox() {
+    const box = $('cropBox'), hint = $('cropHint'), read = $('cropRead');
+    if (!cropRect || !originalWidth) {
+      box.style.display = 'none';
+      hint.style.display = 'block';
+      read.innerHTML = originalWidth
+        ? '<span class="v">' + originalWidth + ' × ' + originalHeight + '</span> — using the whole image'
+        : '';
+      return;
+    }
+    hint.style.display = 'none';
+    box.style.display = 'block';
+    box.style.left   = (cropRect.x / originalWidth  * 100) + '%';
+    box.style.top    = (cropRect.y / originalHeight * 100) + '%';
+    box.style.width  = (cropRect.w / originalWidth  * 100) + '%';
+    box.style.height = (cropRect.h / originalHeight * 100) + '%';
+    const pct = Math.round(cropRect.w * cropRect.h / (originalWidth * originalHeight) * 100);
+    read.innerHTML = 'cropped to <span class="v">' + cropRect.w + ' × ' + cropRect.h + ' px</span> ' +
+      '(' + pct + '% of the original) from <span class="v">' + cropRect.x + ', ' + cropRect.y + '</span>';
+  }
+
+  // Redraw the fit diagram and the pad/fill verdict against the cropped area.
+  async function reanalyzeSource() {
+    if (!cachedDataUrl || !originalWidth) return;
+    const src = sourceRect();
+    if (cropRect) {
+      const c = document.createElement('canvas');
+      const s = Math.min(1, 320 / Math.max(src.w, src.h));
+      c.width = Math.max(1, Math.round(src.w * s));
+      c.height = Math.max(1, Math.round(src.h * s));
+      const img = await loadImage(cachedDataUrl).catch(() => null);
+      if (!img) return;
+      c.getContext('2d').drawImage(img, src.x, src.y, src.w, src.h, 0, 0, c.width, c.height);
+      cropPreviewUrl = c.toDataURL('image/png');
+      detectedKind = analyzeImage(img, src);
+      $('previewOriginal').src = cropPreviewUrl;
+      $('origLabel').textContent = 'Cropped source — ' + src.w + ' × ' + src.h;
+    } else {
+      cropPreviewUrl = null;
+      const img = await loadImage(cachedDataUrl).catch(() => null);
+      if (img) detectedKind = analyzeImage(img, src);
+      $('previewOriginal').src = cachedDataUrl;
+      $('origLabel').textContent = 'Original — ' + originalWidth + ' × ' + originalHeight;
+    }
+    updateFitInfo();
+  }
+
+  (function wireCrop() {
+    const stage = $('cropStage'), box = $('cropBox'), cimg = $('cropImg');
+    let drag = null;
+
+    const metrics = () => {
+      const r = cimg.getBoundingClientRect();
+      return { left:r.left, top:r.top, scale: originalWidth / r.width };
+    };
+    const toNatural = (e, m) => ({
+      x: (e.clientX - m.left) * m.scale,
+      y: (e.clientY - m.top)  * m.scale
     });
 
-    const w = img.naturalWidth, h = img.naturalHeight;
-    if (!kind) kind = analyzeImage(img).kind;
-    const mode = effectiveFit(kind);
+    stage.addEventListener('pointerdown', e => {
+      if (!originalWidth) return;
+      const m = metrics();
+      const p = toNatural(e, m);
+      const handle = e.target.dataset ? e.target.dataset.handle : null;
+      if (handle && cropRect) {
+        drag = { type:'resize', handle, m, start:{ ...cropRect } };
+      } else if (e.target === box && cropRect) {
+        drag = { type:'move', m, grab:p, start:{ ...cropRect } };
+      } else {
+        drag = { type:'new', m, anchor:p };
+      }
+      stage.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
 
-    const canvas = $('canvas');
+    stage.addEventListener('pointermove', e => {
+      if (!drag) return;
+      const p = toNatural(e, drag.m);
+      const ar = $('cropLock').checked ? cropAspect() : 0;
+
+      if (drag.type === 'move') {
+        cropRect = clampRect({
+          x: Math.round(drag.start.x + (p.x - drag.grab.x)),
+          y: Math.round(drag.start.y + (p.y - drag.grab.y)),
+          w: drag.start.w, h: drag.start.h
+        });
+      } else if (drag.type === 'new') {
+        let w = Math.abs(p.x - drag.anchor.x), h = Math.abs(p.y - drag.anchor.y);
+        const right = p.x >= drag.anchor.x, down = p.y >= drag.anchor.y;
+        if (ar) { const f = fitAspect(w, h, ar); w = f.w; h = f.h; }
+        cropRect = clampRect({
+          x: Math.round(right ? drag.anchor.x : drag.anchor.x - w),
+          y: Math.round(down  ? drag.anchor.y : drag.anchor.y - h),
+          w: Math.round(w), h: Math.round(h)
+        });
+      } else {
+        const s = drag.start, hd = drag.handle;
+        const fixedX = hd.includes('w') ? s.x + s.w : s.x;
+        const fixedY = hd.includes('n') ? s.y + s.h : s.y;
+        let w = Math.abs(p.x - fixedX), h = Math.abs(p.y - fixedY);
+        if (ar) { const f = fitAspect(w, h, ar); w = f.w; h = f.h; }
+        w = Math.max(MIN_CROP, w); h = Math.max(MIN_CROP, h);
+        cropRect = clampRect({
+          x: Math.round(hd.includes('w') ? fixedX - w : fixedX),
+          y: Math.round(hd.includes('n') ? fixedY - h : fixedY),
+          w: Math.round(w), h: Math.round(h)
+        });
+      }
+      renderCropBox();
+    });
+
+    const finish = e => {
+      if (!drag) return;
+      const wasNew = drag.type === 'new';
+      drag = null;
+      try { stage.releasePointerCapture(e.pointerId); } catch (err) {}
+      // A click with no drag means "clear the crop".
+      if (wasNew && cropRect && (cropRect.w <= MIN_CROP * 1.5 && cropRect.h <= MIN_CROP * 1.5)) cropRect = null;
+      renderCropBox();
+      reanalyzeSource();
+    };
+    stage.addEventListener('pointerup', finish);
+    stage.addEventListener('pointercancel', finish);
+  })();
+
+  function loadImage(dataUrl, label) {
+    return new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('The image could not be decoded' + (label ? ' — ' + label : '')));
+      i.src = dataUrl;
+    });
+  }
+
+  // Draws src (a rect of img, in natural px) onto the export canvas.
+  function paintImage(img, src, tw, th, mode, bgMode, fillHex) {
+    const w = src.w, h = src.h;
     let fw, fh, ox, oy, outW, outH;
     if (mode === 'cover') {
       const scale = Math.max(tw / w, th / h);
@@ -851,6 +1089,7 @@
       ox = Math.floor((tw - fw) / 2); oy = Math.floor((th - fh) / 2);
     }
 
+    const canvas = $('canvas');
     canvas.width = outW; canvas.height = outH;
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, outW, outH);
@@ -858,24 +1097,39 @@
     if (mode === 'pad') {
       if (bgMode === 'blur') {
         ctx.save(); ctx.filter = 'blur(28px)';
-        const bgScale = Math.max(tw / w, th / h);
-        ctx.drawImage(img, (tw - w*bgScale)/2, (th - h*bgScale)/2, w*bgScale, h*bgScale);
+        const bs = Math.max(tw / w, th / h);
+        ctx.drawImage(img, src.x, src.y, src.w, src.h, (tw - w*bs)/2, (th - h*bs)/2, w*bs, h*bs);
         ctx.restore();
-        ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(0,0,tw,th);
+        ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(0, 0, tw, th);
       } else if (bgMode === 'color') {
-        ctx.fillStyle = $('hexInput').value || '#ffffff';
-        ctx.fillRect(0,0,tw,th);
+        ctx.fillStyle = fillHex || '#ffffff';
+        ctx.fillRect(0, 0, tw, th);
       }
     }
-    ctx.drawImage(img, ox, oy, fw, fh);
+    ctx.drawImage(img, src.x, src.y, src.w, src.h, ox, oy, fw, fh);
+    return { canvas, outW, outH, fw, fh };
+  }
 
-    const keepAlpha = (mode === 'pad' && bgMode === 'transparent') || (mode === 'shrink' && hasAlpha(img));
+  async function renderOneImage(file, dataUrl, kind) {
+    const tw = parseInt($('targetW').value);
+    const th = parseInt($('targetH').value);
+    const bgMode = $('bgMode').value;
+    const format = $('outputFormat').value;
+    const quality = parseInt($('quality').value) / 100;
+
+    const img = await loadImage(dataUrl, file.name);
+    const src = { x:0, y:0, w:img.naturalWidth, h:img.naturalHeight };
+    if (!kind) kind = analyzeImage(img, src).kind;
+    const mode = effectiveFit(kind);
+
+    const out = paintImage(img, src, tw, th, mode, bgMode, $('hexInput').value);
+
+    const keepAlpha = (mode === 'pad' && bgMode === 'transparent') || (mode === 'shrink' && hasAlpha(img, src));
     const activeFormat = keepAlpha ? 'image/png' : format;
     const ext = activeFormat === 'image/jpeg' ? 'jpg' : activeFormat === 'image/webp' ? 'webp' : 'png';
     const base = file.name.replace(/\.[^.]+$/, '');
-    const fileName = base + '_' + outW + 'x' + outH + '.' + ext;
-    const outDataUrl = canvas.toDataURL(activeFormat, quality);
-    return { dataUrl: outDataUrl, fileName };
+    const fileName = base + '_' + out.outW + 'x' + out.outH + '.' + ext;
+    return { dataUrl: out.canvas.toDataURL(activeFormat, quality), fileName };
   }
 
   // ── Presets & dimensions ───────────────────────────────────────────────────
@@ -885,10 +1139,12 @@
     $('targetW').value = w;
     $('targetH').value = h;
     $('lockSquare').checked = (w === h);
+    refitCropToOutput();
     updateFitInfo();
   }
   function onDimInput(changed) {
     document.querySelectorAll('.preset').forEach(b => b.classList.remove('active'));
+    refitCropToOutput();
     if ($('lockSquare').checked) {
       const val = parseInt($(changed === 'w' ? 'targetW' : 'targetH').value) || 0;
       $('targetW').value = val;
@@ -927,7 +1183,9 @@
 
     const kind = detectedKind ? detectedKind.kind : 'product';
     const mode = effectiveFit(kind);
-    if (cachedDataUrl) inner.style.backgroundImage = 'url("' + cachedDataUrl + '")';
+    const src = sourceRect(), sw = src.w, sh = src.h;
+    if (cachedDataUrl) inner.style.backgroundImage = 'url("' + (cropPreviewUrl || cachedDataUrl) + '")';
+    const cropNote = cropRect ? ' <span class="k">of your crop</span>' : '';
 
     let verdict = '';
     if (detectedKind) {
@@ -945,26 +1203,26 @@
 
     if (mode === 'cover') {
       frame.classList.add('cropping'); frame.classList.remove('clear');
-      const scale = Math.max(tw / originalWidth, th / originalHeight);
-      const fw = Math.round(originalWidth * scale), fh = Math.round(originalHeight * scale);
+      const scale = Math.max(tw / sw, th / sh);
+      const fw = Math.round(sw * scale), fh = Math.round(sh * scale);
       const cutX = Math.round((fw - tw) / 2), cutY = Math.round((fh - th) / 2);
       inner.style.width  = (fw / tw * 100) + '%';
       inner.style.height = (fh / th * 100) + '%';
       read.innerHTML = verdict +
         '<div><span class="k">exports at</span> <span class="v">' + tw + ' × ' + th + ' px</span></div>' +
-        '<div><span class="k">image drawn at</span> <span class="v">' + fw + ' × ' + fh + ' px</span> <span class="k">(' + Math.round(scale*100) + '% of original)</span></div>' +
+        '<div><span class="k">image drawn at</span> <span class="v">' + fw + ' × ' + fh + ' px</span> <span class="k">(' + Math.round(scale*100) + '%' + (cropRect ? ' of the crop' : ' of the original') + ')</span></div>' +
         '<div><span class="k">trimmed</span> <span class="v">' + cutX + ' px</span> <span class="k">each side</span> <span class="v">' + cutY + ' px</span> <span class="k">top &amp; bottom</span></div>';
       return;
     }
 
     if (mode === 'shrink') {
-      const scale = Math.min(tw / originalWidth, th / originalHeight);
-      const fw = Math.round(originalWidth * scale), fh = Math.round(originalHeight * scale);
+      const scale = Math.min(tw / sw, th / sh);
+      const fw = Math.round(sw * scale), fh = Math.round(sh * scale);
       frame.classList.remove('cropping', 'clear');
       frame.style.aspectRatio = fw + ' / ' + fh;
       inner.style.width = '100%'; inner.style.height = '100%';
       read.innerHTML = verdict +
-        '<div><span class="k">exports at</span> <span class="v">' + fw + ' × ' + fh + ' px</span> <span class="k">(' + Math.round(scale*100) + '% of original)</span></div>' +
+        '<div><span class="k">exports at</span> <span class="v">' + fw + ' × ' + fh + ' px</span> <span class="k">(' + Math.round(scale*100) + '%' + (cropRect ? ' of the crop' : ' of the original') + ')</span></div>' +
         '<div><span class="k">ceiling</span> <span class="v">' + tw + ' × ' + th + ' px</span></div>' +
         '<div><span class="k">no padding, no crop — the canvas is the image</span></div>';
       return;
@@ -973,8 +1231,8 @@
     const transparentPad = $('bgMode').value === 'transparent';
     frame.classList.remove('cropping');
     frame.classList.toggle('clear', transparentPad);
-    const scale = Math.min(tw / originalWidth, th / originalHeight);
-    const fw = Math.round(originalWidth * scale), fh = Math.round(originalHeight * scale);
+    const scale = Math.min(tw / sw, th / sh);
+    const fw = Math.round(sw * scale), fh = Math.round(sh * scale);
     const padX = Math.floor((tw - fw) / 2), padY = Math.floor((th - fh) / 2);
 
     inner.style.width  = (fw / tw * 100) + '%';
@@ -990,7 +1248,7 @@
 
     read.innerHTML = verdict +
       '<div><span class="k">exports at</span> <span class="v">' + tw + ' × ' + th + ' px</span></div>' +
-      '<div><span class="k">image drawn at</span> <span class="v">' + fw + ' × ' + fh + ' px</span> <span class="k">(' + Math.round(scale*100) + '% of original)</span></div>' +
+      '<div><span class="k">image drawn at</span> <span class="v">' + fw + ' × ' + fh + ' px</span> <span class="k">(' + Math.round(scale*100) + '%' + (cropRect ? ' of the crop' : ' of the original') + ')</span></div>' +
       '<div><span class="pad-key' + (transparentPad ? ' clear' : '') + '"></span><span class="k">' +
         (transparentPad ? 'transparent padding' : 'padding') + '</span> <span class="v">' + padX + ' px</span> <span class="k">each side</span> <span class="v">' + padY + ' px</span> <span class="k">top &amp; bottom</span></div>' +
       colorTip;
@@ -1008,8 +1266,9 @@
     let dims = (tw && th) ? tw + ' × ' + th : '—';
     if (fitMode === 'shrink' && tw && th) {
       if (originalWidth && originalHeight && currentMode === 'single') {
-        const s = Math.min(tw / originalWidth, th / originalHeight);
-        dims = Math.round(originalWidth * s) + ' × ' + Math.round(originalHeight * s);
+        const src = sourceRect();
+        const s = Math.min(tw / src.w, th / src.h);
+        dims = Math.round(src.w * s) + ' × ' + Math.round(src.h * s);
       } else {
         dims = '≤ ' + tw + ' × ' + th;
       }
@@ -1057,84 +1316,44 @@
 
     $('processBtn').disabled = true;
     $('downloadBtn').disabled = true;
-    $('driveBtn').disabled = true;
     $('previewSection').style.display = 'none';
     $('status').className = 'status';
 
     buildStepDots();
-    setProgress('load', 10, 'Loading the image'); await tick();
+    setProgress('load', 12, 'Loading the image'); await tick();
 
-    const img = await new Promise((resolve, reject) => {
-      const i = new Image();
-      i.onload = () => resolve(i);
-      i.onerror = () => reject(new Error('Image element failed to render'));
-      i.src = cachedDataUrl;
-    }).catch(err => { showStatus('The image could not be rendered: ' + err.message, 'error'); $('processBtn').disabled = false; return null; });
+    const img = await loadImage(cachedDataUrl)
+      .catch(err => { showStatus(err.message, 'error'); $('processBtn').disabled = false; return null; });
     if (!img) return;
 
-    const w = img.naturalWidth, h = img.naturalHeight;
     const bgMode = $('bgMode').value;
     const format = $('outputFormat').value;
     const quality = parseInt($('quality').value) / 100;
-    if (!detectedKind) detectedKind = analyzeImage(img);
+    const src = sourceRect();
+
+    setProgress('measure', 34, cropRect ? 'Applying your crop' : 'Working out the fit'); await tick();
+    if (!detectedKind) detectedKind = analyzeImage(img, src);
     const mode = effectiveFit(detectedKind.kind);
 
-    setProgress('canvas', 25, 'Setting up the canvas'); await tick();
-    let fw, fh, ox, oy, outW, outH;
-    if (mode === 'cover') {
-      const scale = Math.max(tw / w, th / h);
-      fw = Math.round(w * scale); fh = Math.round(h * scale);
-      outW = tw; outH = th;
-      ox = Math.round((tw - fw) / 2); oy = Math.round((th - fh) / 2);
-    } else if (mode === 'shrink') {
-      const scale = Math.min(tw / w, th / h);
-      fw = outW = Math.round(w * scale); fh = outH = Math.round(h * scale);
-      ox = 0; oy = 0;
-    } else {
-      const scale = Math.min(tw / w, th / h);
-      fw = Math.round(w * scale); fh = Math.round(h * scale);
-      outW = tw; outH = th;
-      ox = Math.floor((tw - fw) / 2); oy = Math.floor((th - fh) / 2);
-    }
+    setProgress('paint', 62, mode === 'pad' ? 'Padding and drawing' : 'Drawing the image'); await tick();
+    const out = paintImage(img, src, tw, th, mode, bgMode, $('hexInput').value);
 
-    const canvas = $('canvas');
-    canvas.width = outW; canvas.height = outH;
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, outW, outH);
-
-    setProgress('background', 45, mode === 'pad' ? 'Filling the padding' : 'No padding needed'); await tick();
-    if (mode === 'pad') {
-      if (bgMode === 'blur') {
-        ctx.save(); ctx.filter = 'blur(28px)';
-        const bgScale = Math.max(tw / w, th / h);
-        ctx.drawImage(img, (tw - w*bgScale)/2, (th - h*bgScale)/2, w*bgScale, h*bgScale);
-        ctx.restore();
-        ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(0,0,tw,th);
-      } else if (bgMode === 'color') {
-        ctx.fillStyle = $('hexInput').value || '#ffffff';
-        ctx.fillRect(0,0,tw,th);
-      }
-    }
-
-    setProgress('draw', 68, 'Drawing the image'); await tick();
-    ctx.drawImage(img, ox, oy, fw, fh);
-
-    setProgress('export', 85, 'Exporting'); await tick();
-    const keepAlpha = (mode === 'pad' && bgMode === 'transparent') || (mode === 'shrink' && hasAlpha(img));
+    setProgress('export', 84, 'Exporting'); await tick();
+    const keepAlpha = (mode === 'pad' && bgMode === 'transparent') || (mode === 'shrink' && hasAlpha(img, src));
     const activeFormat = keepAlpha ? 'image/png' : format;
     const ext = activeFormat === 'image/jpeg' ? 'jpg' : activeFormat === 'image/webp' ? 'webp' : 'png';
     const base = currentFile.name.replace(/\.[^.]+$/, '');
-    resultFileName = base + '_' + outW + 'x' + outH + '.' + ext;
-    resultDataUrl = canvas.toDataURL(activeFormat, quality);
+    resultFileName = base + '_' + out.outW + 'x' + out.outH + '.' + ext;
+    resultDataUrl = out.canvas.toDataURL(activeFormat, quality);
 
     setProgress('done', 100, 'Finished'); await tick();
     $('previewSquared').src = resultDataUrl;
-    $('resultLabel').textContent = 'Resized — ' + outW + ' × ' + outH;
+    $('resultLabel').textContent = 'Resized — ' + out.outW + ' × ' + out.outH;
     $('previewSection').style.display = 'block';
     $('processBtn').disabled = false;
     $('downloadBtn').disabled = false;
-    $('driveBtn').disabled = false;
-    showStatus('Exported at ' + outW + ' × ' + outH + ' px, ' +
+    showStatus('Exported at ' + out.outW + ' × ' + out.outH + ' px, ' +
+      (cropRect ? 'from your crop, ' : '') +
       (mode === 'cover' ? 'filled with no padding' :
        mode === 'shrink' ? 'scaled to fit with no padding added' :
        'scaled to fit and padded') +
@@ -1151,7 +1370,6 @@
 
     $('bulkProcessBtn').disabled = true;
     $('bulkDownloadBtn').disabled = true;
-    $('bulkDriveBtn').disabled = true;
     bulkResults = [];
 
     const overall = $('bulkOverall');
@@ -1199,10 +1417,7 @@
     overallLabel.textContent = doneCount + ' of ' + bulkQueue.length + ' finished';
 
     $('bulkProcessBtn').disabled = false;
-    if (bulkResults.length > 0) {
-      $('bulkDownloadBtn').disabled = false;
-      $('bulkDriveBtn').disabled = false;
-    }
+    if (bulkResults.length > 0) $('bulkDownloadBtn').disabled = false;
     const errors = bulkQueue.length - doneCount;
     if (errors > 0) {
       showStatus(doneCount + ' resized, ' + errors + ' failed. The browser console has the details for the failures.', 'error');
@@ -1236,63 +1451,11 @@
     $('bulkDownloadBtn').disabled = false;
   }
 
-  // ── Drive ─────────────────────────────────────────────────────────────────
-  function driveReady() {
-    if (typeof google === 'undefined' || !google.script || !google.script.run) {
-      showStatus('Drive saving only works when this page runs inside Google Apps Script. Use Download instead.', 'error');
-      return false;
-    }
-    return true;
-  }
-
-  async function saveBulkToDrive() {
-    if (!bulkResults.length) return;
-    if (!driveReady()) return;
-    $('bulkDriveBtn').disabled = true;
-    showStatus('Uploading ' + bulkResults.length + ' images to Drive.', 'info');
-    let uploaded = 0, failed = 0;
-    for (const { dataUrl, fileName } of bulkResults) {
-      const mimeType = dataUrl.split(';')[0].split(':')[1];
-      const base64 = dataUrl.split(',')[1];
-      const folderId = $('folderId').value.trim();
-      await new Promise(resolve => {
-        google.script.run
-          .withSuccessHandler(() => { uploaded++; resolve(); })
-          .withFailureHandler(() => { failed++; resolve(); })
-          .saveImageToDrive(base64, mimeType, fileName, folderId);
-      });
-    }
-    $('bulkDriveBtn').disabled = false;
-    if (failed > 0) {
-      showStatus(uploaded + ' saved to Drive, ' + failed + ' failed. Check the folder ID and try again.', 'error');
-    } else {
-      showStatus('All ' + uploaded + ' images saved to Drive.', 'ok');
-    }
-  }
-
   function downloadResult() {
     if (!resultDataUrl) return;
     const a = document.createElement('a'); a.href = resultDataUrl; a.download = resultFileName; a.click();
   }
 
-  function saveToDrive() {
-    if (!resultDataUrl) return;
-    if (!driveReady()) return;
-    showStatus('Uploading to Drive.', 'info');
-    $('driveBtn').disabled = true;
-    const mimeType = resultDataUrl.split(';')[0].split(':')[1];
-    const base64 = resultDataUrl.split(',')[1];
-    google.script.run
-      .withSuccessHandler(url => {
-        $('driveBtn').disabled = false;
-        showStatus('Saved to Drive. <a href="' + url + '" target="_blank">Open the file</a>', 'ok');
-      })
-      .withFailureHandler(err => {
-        $('driveBtn').disabled = false;
-        showStatus('The Drive upload failed — ' + err.message, 'error');
-      })
-      .saveImageToDrive(base64, mimeType, resultFileName, $('folderId').value.trim());
-  }
 
   // ── Status ─────────────────────────────────────────────────────────────────
   function showStatus(msg, type) {
