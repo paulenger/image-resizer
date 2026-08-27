@@ -138,7 +138,7 @@
 
     /* ── Fit mode ── */
     .fitmode-row{margin-top:20px}
-    .fitmode{display:inline-flex;background:var(--paper);border-radius:8px;padding:3px;gap:3px}
+    .fitmode{display:inline-flex;flex-wrap:wrap;background:var(--paper);border-radius:8px;padding:3px;gap:3px}
     .fitmode button{
       font:inherit;font-size:12.5px;font-weight:500;color:var(--ink-2);
       background:transparent;border:none;border-radius:6px;padding:6px 13px;cursor:pointer;
@@ -177,6 +177,22 @@
     .fit-frame.cropping{
       background-color:transparent;background-image:none;
       border-color:var(--line);overflow:hidden;
+    }
+    .fit-frame.clear{
+      background-color:#fff;border-color:var(--line);
+      background-image:linear-gradient(45deg,#e6e6e8 25%,transparent 25%),
+                       linear-gradient(-45deg,#e6e6e8 25%,transparent 25%),
+                       linear-gradient(45deg,transparent 75%,#e6e6e8 75%),
+                       linear-gradient(-45deg,transparent 75%,#e6e6e8 75%);
+      background-size:12px 12px;background-position:0 0,0 6px,6px -6px,-6px 0;
+    }
+    .pad-key.clear{
+      background-color:#fff;border-color:rgba(20,22,26,.2);
+      background-image:linear-gradient(45deg,#dcdce0 25%,transparent 25%),
+                       linear-gradient(-45deg,#dcdce0 25%,transparent 25%),
+                       linear-gradient(45deg,transparent 75%,#dcdce0 75%),
+                       linear-gradient(-45deg,transparent 75%,#dcdce0 75%);
+      background-size:6px 6px;background-position:0 0,0 3px,3px -3px,-3px 0;
     }
     .fit-inner{
       background:#dcdde0 center/cover no-repeat;
@@ -376,6 +392,7 @@
       <button class="active" data-mode="auto" onclick="setFitMode('auto')">Decide per image</button>
       <button data-mode="pad" onclick="setFitMode('pad')">Always pad</button>
       <button data-mode="cover" onclick="setFitMode('cover')">Always fill</button>
+      <button data-mode="shrink" onclick="setFitMode('shrink')">Never pad</button>
     </div>
     <p class="help" id="fitModeHelp">Product shots on a plain backdrop get padded. Lifestyle photos fill the frame instead, so you never get bars down the sides.</p>
   </div>
@@ -392,7 +409,7 @@
       <span class="lbl">Fill the padding with</span>
       <select id="bgMode" onchange="onBgModeChange()">
         <option value="color">A solid color</option>
-        <option value="transparent">Nothing (transparent PNG)</option>
+        <option value="transparent">Nothing — leave it transparent</option>
         <option value="blur">A blurred copy of the image</option>
       </select>
     </div>
@@ -546,10 +563,35 @@
     return { kind, uniformity, transparent: clear, edgeHex: hex, cutout: false };
   }
 
+  function hasAlpha(img) {
+    const S = 48;
+    const c = document.createElement('canvas');
+    c.width = S; c.height = S;
+    const x = c.getContext('2d', { willReadFrequently: true });
+    x.clearRect(0, 0, S, S);
+    x.drawImage(img, 0, 0, S, S);
+    try {
+      const d = x.getImageData(0, 0, S, S).data;
+      for (let i = 3; i < d.length; i += 4) if (d[i] < 250) return true;
+    } catch (e) { return false; }
+    return false;
+  }
+
   function effectiveFit(kind) {
-    if (fitMode === 'pad')   return 'pad';
-    if (fitMode === 'cover') return 'cover';
+    if (fitMode === 'pad')    return 'pad';
+    if (fitMode === 'cover')  return 'cover';
+    if (fitMode === 'shrink') return 'shrink';
     return kind === 'lifestyle' ? 'cover' : 'pad';
+  }
+
+  function queueSplit() {
+    const plan = { pad:0, cover:0, shrink:0 };
+    bulkQueue.forEach(i => plan[effectiveFit(i.kind || 'product')]++);
+    const parts = [];
+    if (plan.pad)    parts.push(plan.pad + ' padded');
+    if (plan.cover)  parts.push(plan.cover + ' filled');
+    if (plan.shrink) parts.push(plan.shrink + ' left unpadded');
+    return parts.join(', ');
   }
 
   function setFitMode(mode) {
@@ -558,7 +600,8 @@
     $('fitModeHelp').textContent =
       mode === 'auto'  ? 'Product shots on a plain backdrop get padded. Lifestyle photos fill the frame instead, so you never get bars down the sides.' :
       mode === 'pad'   ? 'Every image is scaled to fit and padded, even if it means bars down the sides.' :
-                         'Every image fills the frame. Anything past the edges is cropped off.';
+      mode === 'cover' ? 'Every image fills the frame. Anything past the edges is cropped off.' :
+                         'Your size becomes a ceiling. Each image is scaled to fit inside it and exported at its own size, so nothing is added or trimmed.';
     renderBulkQueue();
     updateFitInfo();
   }
@@ -725,10 +768,8 @@
       }
     }
 
-    const fills = bulkQueue.filter(i => effectiveFit(i.kind || 'product') === 'cover').length;
-    const pads = bulkQueue.length - fills;
     showStatus(bulkQueue.length + ' image' + (bulkQueue.length !== 1 ? 's' : '') + ' queued — ' +
-      pads + ' to pad, ' + fills + ' to fill. Set your output size, then resize all.', 'info');
+      queueSplit() + '. Set your output size, then resize all.', 'info');
   }
 
   function renderBulkQueue() {
@@ -742,7 +783,8 @@
       const row = document.createElement('div');
       row.className = 'qitem'; row.id = 'qitem-' + idx;
       const labels = { pending:'Waiting', active:'Working', done:'Done', error:'Failed' };
-      const treat = item.kind ? (effectiveFit(item.kind) === 'cover' ? 'Fill' : 'Pad') : '·';
+      const fitOf = m => m === 'cover' ? 'Fill' : m === 'shrink' ? 'No pad' : 'Pad';
+      const treat = item.kind ? fitOf(effectiveFit(item.kind)) : '·';
       row.innerHTML =
         '<span class="qitem-name" title="' + esc(item.file.name) + '">' + esc(item.file.name) + '</span>' +
         '<span class="qitem-size">' + (item.file.size/1024/1024).toFixed(2) + ' MB</span>' +
@@ -792,18 +834,28 @@
     const mode = effectiveFit(kind);
 
     const canvas = $('canvas');
-    canvas.width = tw; canvas.height = th;
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, tw, th);
-
+    let fw, fh, ox, oy, outW, outH;
     if (mode === 'cover') {
       const scale = Math.max(tw / w, th / h);
-      const fw = Math.round(w * scale), fh = Math.round(h * scale);
-      ctx.drawImage(img, Math.round((tw - fw) / 2), Math.round((th - fh) / 2), fw, fh);
+      fw = Math.round(w * scale); fh = Math.round(h * scale);
+      outW = tw; outH = th;
+      ox = Math.round((tw - fw) / 2); oy = Math.round((th - fh) / 2);
+    } else if (mode === 'shrink') {
+      const scale = Math.min(tw / w, th / h);
+      fw = outW = Math.round(w * scale); fh = outH = Math.round(h * scale);
+      ox = 0; oy = 0;
     } else {
       const scale = Math.min(tw / w, th / h);
-      const fw = Math.round(w * scale), fh = Math.round(h * scale);
-      const ox = Math.floor((tw - fw) / 2), oy = Math.floor((th - fh) / 2);
+      fw = Math.round(w * scale); fh = Math.round(h * scale);
+      outW = tw; outH = th;
+      ox = Math.floor((tw - fw) / 2); oy = Math.floor((th - fh) / 2);
+    }
+
+    canvas.width = outW; canvas.height = outH;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, outW, outH);
+
+    if (mode === 'pad') {
       if (bgMode === 'blur') {
         ctx.save(); ctx.filter = 'blur(28px)';
         const bgScale = Math.max(tw / w, th / h);
@@ -814,14 +866,14 @@
         ctx.fillStyle = $('hexInput').value || '#ffffff';
         ctx.fillRect(0,0,tw,th);
       }
-      ctx.drawImage(img, ox, oy, fw, fh);
     }
+    ctx.drawImage(img, ox, oy, fw, fh);
 
-    const transparentOut = (bgMode === 'transparent' && mode === 'pad');
-    const activeFormat = transparentOut ? 'image/png' : format;
+    const keepAlpha = (mode === 'pad' && bgMode === 'transparent') || (mode === 'shrink' && hasAlpha(img));
+    const activeFormat = keepAlpha ? 'image/png' : format;
     const ext = activeFormat === 'image/jpeg' ? 'jpg' : activeFormat === 'image/webp' ? 'webp' : 'png';
     const base = file.name.replace(/\.[^.]+$/, '');
-    const fileName = base + '_' + tw + 'x' + th + '.' + ext;
+    const fileName = base + '_' + outW + 'x' + outH + '.' + ext;
     const outDataUrl = canvas.toDataURL(activeFormat, quality);
     return { dataUrl: outDataUrl, fileName };
   }
@@ -864,7 +916,7 @@
     frame.style.aspectRatio = tw + ' / ' + th;
 
     if (!originalWidth || !originalHeight) {
-      frame.classList.remove('cropping');
+      frame.classList.remove('cropping', 'clear');
       inner.style.width = '0'; inner.style.height = '0';
       read.innerHTML =
         '<div><span class="k">output</span> <span class="v">' + tw + ' × ' + th + ' px</span></div>' +
@@ -880,7 +932,8 @@
     let verdict = '';
     if (detectedKind) {
       if (fitMode !== 'auto') {
-        verdict = '<div class="verdict manual">Set by hand — ' + (mode === 'cover' ? 'filling' : 'padding') + '</div>';
+        verdict = '<div class="verdict manual">Set by hand — ' +
+          (mode === 'cover' ? 'filling' : mode === 'shrink' ? 'no padding' : 'padding') + '</div>';
       } else if (detectedKind.cutout) {
         verdict = '<div class="verdict">Cutout on transparency — padding</div>';
       } else if (kind === 'product') {
@@ -891,20 +944,35 @@
     }
 
     if (mode === 'cover') {
-      frame.classList.add('cropping');
+      frame.classList.add('cropping'); frame.classList.remove('clear');
       const scale = Math.max(tw / originalWidth, th / originalHeight);
       const fw = Math.round(originalWidth * scale), fh = Math.round(originalHeight * scale);
       const cutX = Math.round((fw - tw) / 2), cutY = Math.round((fh - th) / 2);
       inner.style.width  = (fw / tw * 100) + '%';
       inner.style.height = (fh / th * 100) + '%';
       read.innerHTML = verdict +
-        '<div><span class="k">output</span> <span class="v">' + tw + ' × ' + th + ' px</span></div>' +
-        '<div><span class="k">image</span> <span class="v">' + fw + ' × ' + fh + ' px</span> <span class="k">(' + Math.round(scale*100) + '%)</span></div>' +
+        '<div><span class="k">exports at</span> <span class="v">' + tw + ' × ' + th + ' px</span></div>' +
+        '<div><span class="k">image drawn at</span> <span class="v">' + fw + ' × ' + fh + ' px</span> <span class="k">(' + Math.round(scale*100) + '% of original)</span></div>' +
         '<div><span class="k">trimmed</span> <span class="v">' + cutX + ' px</span> <span class="k">each side</span> <span class="v">' + cutY + ' px</span> <span class="k">top &amp; bottom</span></div>';
       return;
     }
 
+    if (mode === 'shrink') {
+      const scale = Math.min(tw / originalWidth, th / originalHeight);
+      const fw = Math.round(originalWidth * scale), fh = Math.round(originalHeight * scale);
+      frame.classList.remove('cropping', 'clear');
+      frame.style.aspectRatio = fw + ' / ' + fh;
+      inner.style.width = '100%'; inner.style.height = '100%';
+      read.innerHTML = verdict +
+        '<div><span class="k">exports at</span> <span class="v">' + fw + ' × ' + fh + ' px</span> <span class="k">(' + Math.round(scale*100) + '% of original)</span></div>' +
+        '<div><span class="k">ceiling</span> <span class="v">' + tw + ' × ' + th + ' px</span></div>' +
+        '<div><span class="k">no padding, no crop — the canvas is the image</span></div>';
+      return;
+    }
+
+    const transparentPad = $('bgMode').value === 'transparent';
     frame.classList.remove('cropping');
+    frame.classList.toggle('clear', transparentPad);
     const scale = Math.min(tw / originalWidth, th / originalHeight);
     const fw = Math.round(originalWidth * scale), fh = Math.round(originalHeight * scale);
     const padX = Math.floor((tw - fw) / 2), padY = Math.floor((th - fh) / 2);
@@ -913,7 +981,7 @@
     inner.style.height = (fh / th * 100) + '%';
 
     let colorTip = '';
-    if (detectedKind && !detectedKind.cutout && kind === 'product' &&
+    if (detectedKind && !detectedKind.cutout && kind === 'product' && !transparentPad &&
         $('bgMode').value === 'color' &&
         detectedKind.edgeHex.toLowerCase() !== ($('hexInput').value || '').toLowerCase()) {
       colorTip = '<div><span class="swatch" style="background:' + detectedKind.edgeHex + '"></span>' +
@@ -921,9 +989,10 @@
     }
 
     read.innerHTML = verdict +
-      '<div><span class="k">output</span> <span class="v">' + tw + ' × ' + th + ' px</span></div>' +
-      '<div><span class="k">image</span> <span class="v">' + fw + ' × ' + fh + ' px</span> <span class="k">(' + Math.round(scale*100) + '%)</span></div>' +
-      '<div><span class="pad-key"></span><span class="k">padding</span> <span class="v">' + padX + ' px</span> <span class="k">sides</span> <span class="v">' + padY + ' px</span> <span class="k">top &amp; bottom</span></div>' +
+      '<div><span class="k">exports at</span> <span class="v">' + tw + ' × ' + th + ' px</span></div>' +
+      '<div><span class="k">image drawn at</span> <span class="v">' + fw + ' × ' + fh + ' px</span> <span class="k">(' + Math.round(scale*100) + '% of original)</span></div>' +
+      '<div><span class="pad-key' + (transparentPad ? ' clear' : '') + '"></span><span class="k">' +
+        (transparentPad ? 'transparent padding' : 'padding') + '</span> <span class="v">' + padX + ' px</span> <span class="k">each side</span> <span class="v">' + padY + ' px</span> <span class="k">top &amp; bottom</span></div>' +
       colorTip;
   }
 
@@ -931,11 +1000,23 @@
     const tw = parseInt($('targetW').value) || 0;
     const th = parseInt($('targetH').value) || 0;
     const bgMode = $('bgMode').value;
-    const fmt = bgMode === 'transparent' ? 'image/png' : $('outputFormat').value;
+    const padding = (fitMode === 'pad') || (fitMode === 'auto' && !(currentMode === 'single' && detectedKind && detectedKind.kind === 'lifestyle'));
+    const fmt = (padding && bgMode === 'transparent') ? 'image/png' : $('outputFormat').value;
     const name = fmt === 'image/jpeg' ? 'JPEG' : fmt === 'image/webp' ? 'WebP' : 'PNG';
     const lossy = (fmt === 'image/jpeg' || fmt === 'image/webp');
-    $('specDims').textContent = (tw && th) ? tw + ' × ' + th : '—';
-    $('specFormat').textContent = name + (lossy ? ' · Q' + ($('quality').value || 95) : (bgMode === 'transparent' ? ' · transparent' : ''));
+
+    let dims = (tw && th) ? tw + ' × ' + th : '—';
+    if (fitMode === 'shrink' && tw && th) {
+      if (originalWidth && originalHeight && currentMode === 'single') {
+        const s = Math.min(tw / originalWidth, th / originalHeight);
+        dims = Math.round(originalWidth * s) + ' × ' + Math.round(originalHeight * s);
+      } else {
+        dims = '≤ ' + tw + ' × ' + th;
+      }
+    }
+    $('specDims').textContent = dims;
+    $('specFormat').textContent = name + (lossy ? ' · Q' + ($('quality').value || 95)
+      : (padding && bgMode === 'transparent' ? ' · transparent' : ''));
   }
 
   // ── Color & format controls ────────────────────────────────────────────────
@@ -946,7 +1027,7 @@
   }
   function syncPadControls() {
     const single = currentMode === 'single';
-    const filling = fitMode === 'cover' ||
+    const filling = fitMode === 'cover' || fitMode === 'shrink' ||
       (fitMode === 'auto' && single && detectedKind && detectedKind.kind === 'lifestyle');
     $('bgModeWrap').classList.toggle('dimmed', filling);
     $('colorPickerWrap').classList.toggle('dimmed', filling || $('bgMode').value !== 'color');
@@ -957,11 +1038,12 @@
   }
   function onFormatChange() {
     const bgMode = $('bgMode').value;
-    const fmt = bgMode === 'transparent' ? 'image/png' : $('outputFormat').value;
+    const padding = (fitMode === 'pad') || (fitMode === 'auto' && !(currentMode === 'single' && detectedKind && detectedKind.kind === 'lifestyle'));
+    const fmt = (padding && bgMode === 'transparent') ? 'image/png' : $('outputFormat').value;
     const lossy = (fmt === 'image/jpeg' || fmt === 'image/webp');
     $('qualityWrap').classList.toggle('dimmed', !lossy);
     $('qualityHelp').textContent = lossy ? 'Higher means a larger file' :
-      (bgMode === 'transparent' ? 'Transparent output is always PNG' : 'PNG is lossless, so quality does not apply');
+      (padding && bgMode === 'transparent' ? 'Transparent padding forces PNG, since JPEG has no transparency' : 'PNG is lossless, so quality does not apply');
     updateSpec();
   }
 
@@ -998,21 +1080,30 @@
     const mode = effectiveFit(detectedKind.kind);
 
     setProgress('canvas', 25, 'Setting up the canvas'); await tick();
-    const canvas = $('canvas');
-    canvas.width = tw; canvas.height = th;
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, tw, th);
-
-    setProgress('background', 45, mode === 'cover' ? 'No padding needed' : 'Filling the padding'); await tick();
-    let fw, fh, ox, oy;
+    let fw, fh, ox, oy, outW, outH;
     if (mode === 'cover') {
       const scale = Math.max(tw / w, th / h);
       fw = Math.round(w * scale); fh = Math.round(h * scale);
+      outW = tw; outH = th;
       ox = Math.round((tw - fw) / 2); oy = Math.round((th - fh) / 2);
+    } else if (mode === 'shrink') {
+      const scale = Math.min(tw / w, th / h);
+      fw = outW = Math.round(w * scale); fh = outH = Math.round(h * scale);
+      ox = 0; oy = 0;
     } else {
       const scale = Math.min(tw / w, th / h);
       fw = Math.round(w * scale); fh = Math.round(h * scale);
+      outW = tw; outH = th;
       ox = Math.floor((tw - fw) / 2); oy = Math.floor((th - fh) / 2);
+    }
+
+    const canvas = $('canvas');
+    canvas.width = outW; canvas.height = outH;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, outW, outH);
+
+    setProgress('background', 45, mode === 'pad' ? 'Filling the padding' : 'No padding needed'); await tick();
+    if (mode === 'pad') {
       if (bgMode === 'blur') {
         ctx.save(); ctx.filter = 'blur(28px)';
         const bgScale = Math.max(tw / w, th / h);
@@ -1029,21 +1120,24 @@
     ctx.drawImage(img, ox, oy, fw, fh);
 
     setProgress('export', 85, 'Exporting'); await tick();
-    const activeFormat = (bgMode === 'transparent' && mode === 'pad') ? 'image/png' : format;
+    const keepAlpha = (mode === 'pad' && bgMode === 'transparent') || (mode === 'shrink' && hasAlpha(img));
+    const activeFormat = keepAlpha ? 'image/png' : format;
     const ext = activeFormat === 'image/jpeg' ? 'jpg' : activeFormat === 'image/webp' ? 'webp' : 'png';
     const base = currentFile.name.replace(/\.[^.]+$/, '');
-    resultFileName = base + '_' + tw + 'x' + th + '.' + ext;
+    resultFileName = base + '_' + outW + 'x' + outH + '.' + ext;
     resultDataUrl = canvas.toDataURL(activeFormat, quality);
 
     setProgress('done', 100, 'Finished'); await tick();
     $('previewSquared').src = resultDataUrl;
-    $('resultLabel').textContent = 'Resized — ' + tw + ' × ' + th;
+    $('resultLabel').textContent = 'Resized — ' + outW + ' × ' + outH;
     $('previewSection').style.display = 'block';
     $('processBtn').disabled = false;
     $('downloadBtn').disabled = false;
     $('driveBtn').disabled = false;
-    showStatus('Resized to ' + tw + ' × ' + th + ' px, ' +
-      (mode === 'cover' ? 'filling the frame with no padding' : 'scaled to fit and padded') +
+    showStatus('Exported at ' + outW + ' × ' + outH + ' px, ' +
+      (mode === 'cover' ? 'filled with no padding' :
+       mode === 'shrink' ? 'scaled to fit with no padding added' :
+       'scaled to fit and padded') +
       '. Saved as ' + resultFileName, 'ok');
   }
 
@@ -1068,7 +1162,6 @@
     overallBar.classList.remove('done');
 
     bulkQueue.forEach(item => { item.status = 'pending'; item.resultDataUrl = null; item.resultFileName = null; });
-    const fillCount = bulkQueue.filter(i => effectiveFit(i.kind || 'product') === 'cover').length;
     renderBulkQueue();
 
     let doneCount = 0;
@@ -1114,8 +1207,7 @@
     if (errors > 0) {
       showStatus(doneCount + ' resized, ' + errors + ' failed. The browser console has the details for the failures.', 'error');
     } else {
-      showStatus('All ' + doneCount + ' images resized to ' + tw + ' × ' + th + ' px — ' +
-        (doneCount - fillCount) + ' padded, ' + fillCount + ' filled.', 'ok');
+      showStatus('All ' + doneCount + ' images done at ' + tw + ' × ' + th + ' px — ' + queueSplit() + '.', 'ok');
     }
   }
 
