@@ -175,6 +175,9 @@
     .times{font-family:var(--mono);font-size:14px;color:var(--muted);text-align:center;padding-bottom:12px}
     .lock{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2);cursor:pointer;user-select:none;margin-top:12px}
     .lock input{width:15px;height:15px;cursor:pointer;accent-color:var(--ink)}
+    .dims input.bad{border-color:var(--err)}
+    .dim-error{display:none;margin-top:10px;font-size:12.5px;color:var(--err)}
+    .dim-error.visible{display:block}
 
     /* ── Fit mode ── */
     .fitmode-row{margin-top:20px}
@@ -320,6 +323,7 @@
     .status{display:none;margin-top:18px;font-size:13px;padding:11px 14px;border-radius:8px;border:1px solid var(--line);background:#fcfcfc}
     .status.info{display:block}
     .status.ok{display:block;border-color:rgba(31,122,77,.28);background:rgba(31,122,77,.06);color:var(--ok)}
+    .status.warn{display:block;border-color:rgba(184,118,10,.32);background:rgba(184,118,10,.06);color:#8a5a08}
     .status.error{display:block;border-color:rgba(179,38,30,.28);background:rgba(179,38,30,.05);color:var(--err)}
     .status a{color:inherit}
 
@@ -449,6 +453,7 @@
     <input type="checkbox" id="lockSquare" onchange="onLockChange()" />
     Keep it square
   </label>
+  <p class="dim-error" id="dimError"></p>
 
   <div class="fitmode-row">
     <span class="lbl">When the image doesn't match that shape</span>
@@ -476,6 +481,7 @@
         <option value="transparent">Nothing — leave it transparent</option>
         <option value="blur">A blurred copy of the image</option>
       </select>
+      <p class="help" id="bgHelp" style="display:none"></p>
     </div>
     <div id="colorPickerWrap">
       <span class="lbl">Fill color</span>
@@ -555,6 +561,7 @@
   let cachedDataUrl = null;
   let originalWidth = 0, originalHeight = 0;
   let resultDataUrl = null, resultFileName = null;
+  let singleReady = false;
   // Bulk
   let bulkQueue = []; // { file, dataUrl, status, resultDataUrl, resultFileName }
   let bulkResults = [];
@@ -615,19 +622,26 @@
     return { kind, uniformity, transparent: clear, edgeHex: hex, cutout: false };
   }
 
-  function hasAlpha(img, src) {
-    const S = 48;
-    src = src || { x:0, y:0, w:img.naturalWidth, h:img.naturalHeight };
-    const c = document.createElement('canvas');
-    c.width = S; c.height = S;
-    const x = c.getContext('2d', { willReadFrequently: true });
-    x.clearRect(0, 0, S, S);
-    x.drawImage(img, src.x, src.y, src.w, src.h, 0, 0, S, S);
-    try {
-      const d = x.getImageData(0, 0, S, S).data;
-      for (let i = 3; i < d.length; i += 4) if (d[i] < 250) return true;
-    } catch (e) { return false; }
-    return false;
+  const MAX_DIM = 8000;
+  function dimsValid() {
+    const tw = parseInt($('targetW').value), th = parseInt($('targetH').value);
+    if (!tw || !th || tw < 1 || th < 1) return { ok:false, msg:'Enter a width and height of at least 1 px.' };
+    if (tw > MAX_DIM || th > MAX_DIM) return { ok:false, msg:MAX_DIM + ' px is the largest dimension this tool handles. ' +
+      (tw > MAX_DIM && th > MAX_DIM ? 'Both values are' : (tw > MAX_DIM ? 'Width is' : 'Height is')) + ' over the limit.' };
+    return { ok:true, tw, th };
+  }
+  // Runs on every keystroke so the preview never promises a size we won't produce.
+  function syncDimValidity() {
+    const v = dimsValid();
+    const err = $('dimError');
+    err.textContent = v.ok ? '' : v.msg;
+    err.classList.toggle('visible', !v.ok);
+    const tw = parseInt($('targetW').value), th = parseInt($('targetH').value);
+    $('targetW').classList.toggle('bad', !v.ok && (!tw || tw < 1 || tw > MAX_DIM));
+    $('targetH').classList.toggle('bad', !v.ok && (!th || th < 1 || th > MAX_DIM));
+    $('processBtn').disabled = !v.ok || !singleReady;
+    $('bulkProcessBtn').disabled = !v.ok || bulkQueue.length === 0;
+    return v;
   }
 
   function effectiveFit(kind) {
@@ -753,7 +767,7 @@
       showStatus('That file is not an image. Pick a PNG, JPEG, WebP, or GIF.', 'error'); return;
     }
     currentFile = file; cachedDataUrl = null; resultDataUrl = null; detectedKind = null;
-    cropRect = null; cropPreviewUrl = null;
+    cropRect = null; cropPreviewUrl = null; singleReady = false;
     hideCropPanel();
     $('processBtn').disabled = true;
     $('downloadBtn').disabled = true;
@@ -770,9 +784,9 @@
         detectedKind = analyzeImage(probe);
         $('origLabel').textContent = 'Original — ' + originalWidth + ' × ' + originalHeight;
         $('fileInfo').textContent = file.name + '  ·  ' + (file.size/1024/1024).toFixed(2) + ' MB  ·  ' + originalWidth + ' × ' + originalHeight + ' px';
+        singleReady = true;
         showCropPanel();
         updateFitInfo();
-        $('processBtn').disabled = false;
         showStatus(file.name + ' is ready. Drag on the image to crop it, or leave it as is.', 'info');
       };
       probe.onerror = () => showStatus('The file was read but the image could not be decoded. Try re-saving it.', 'error');
@@ -790,19 +804,31 @@
     if (e.dataTransfer.files.length) onBulkFilesSelected(e.dataTransfer.files);
   });
 
+  function fileList(files) {
+    const names = files.slice(0, 3).map(f => f.name).join(', ');
+    return names + (files.length > 3 ? ' and ' + (files.length - 3) + ' more' : '');
+  }
+
   async function onBulkFilesSelected(files) {
-    const arr = Array.from(files).filter(f => f.type.startsWith('image/'));
-    if (!arr.length) { showStatus('None of those files are images.', 'error'); return; }
+    const arr = [], skipped = [], dupes = [];
+    Array.from(files).forEach(f => (f.type.startsWith('image/') ? arr : skipped).push(f));
+
+    if (!arr.length) {
+      showStatus(skipped.length === 1
+        ? esc(skipped[0].name) + ' is not an image, so nothing was added.'
+        : 'None of those ' + skipped.length + ' files are images: ' + esc(fileList(skipped)), 'error');
+      return;
+    }
+
     const added = [];
     arr.forEach(file => {
       const exists = bulkQueue.some(q => q.file.name === file.name && q.file.size === file.size);
-      if (!exists) {
-        const item = { file, dataUrl: null, status: 'pending', kind: null, resultDataUrl: null, resultFileName: null };
-        bulkQueue.push(item); added.push(item);
-      }
+      if (exists) { dupes.push(file); return; }
+      const item = { file, dataUrl: null, status: 'pending', kind: null, resultDataUrl: null, resultFileName: null };
+      bulkQueue.push(item); added.push(item);
     });
     renderBulkQueue();
-    $('bulkProcessBtn').disabled = bulkQueue.length === 0;
+    syncDimValidity();
 
     if (added.length) {
       showStatus('Checking ' + added.length + ' image' + (added.length !== 1 ? 's' : '') + '.', 'info');
@@ -823,8 +849,14 @@
       }
     }
 
+    let note = '';
+    if (skipped.length) note += ' Skipped ' + skipped.length + ' non-image file' +
+      (skipped.length !== 1 ? 's' : '') + ': ' + esc(fileList(skipped)) + '.';
+    if (dupes.length) note += ' ' + dupes.length + ' already in the queue: ' + esc(fileList(dupes)) + '.';
+
     showStatus(bulkQueue.length + ' image' + (bulkQueue.length !== 1 ? 's' : '') + ' queued — ' +
-      queueSplit() + '. Set your output size, then resize all.', 'info');
+      queueSplit() + '. Set your output size, then resize all.' + note,
+      skipped.length ? 'warn' : 'info');
   }
 
   function renderBulkQueue() {
@@ -855,14 +887,14 @@
   function removeFromQueue(idx) {
     bulkQueue.splice(idx, 1);
     renderBulkQueue();
-    $('bulkProcessBtn').disabled = bulkQueue.length === 0;
+    syncDimValidity();
     if (!bulkQueue.length) clearStatus();
   }
 
   function clearQueue() {
     bulkQueue = []; bulkResults = [];
     renderBulkQueue();
-    $('bulkProcessBtn').disabled = true;
+    syncDimValidity();
     $('bulkDownloadBtn').disabled = true;
     $('bulkOverall').classList.remove('visible');
     clearStatus();
@@ -913,12 +945,16 @@
     reanalyzeSource();
   }
 
+  // Ticking the box applies a crop straight away rather than only affecting
+  // future drags: the largest centered box matching the output shape.
   function onCropLockChange() {
-    if (!cropRect || !$('cropLock').checked) { renderCropBox(); return; }
+    if (!$('cropLock').checked || !originalWidth) { renderCropBox(); return; }
     const ar = cropAspect();
-    const cx = cropRect.x + cropRect.w / 2, cy = cropRect.y + cropRect.h / 2;
-    const s = fitAspect(cropRect.w, cropRect.h, ar);
-    cropRect = clampRect({ x: Math.round(cx - s.w/2), y: Math.round(cy - s.h/2), w: Math.round(s.w), h: Math.round(s.h) });
+    if (!ar) { renderCropBox(); return; }
+    const base = cropRect || { x:0, y:0, w:originalWidth, h:originalHeight };
+    const cx = base.x + base.w / 2, cy = base.y + base.h / 2;
+    const f = fitAspect(base.w, base.h, ar);
+    cropRect = clampRect({ x: Math.round(cx - f.w/2), y: Math.round(cy - f.h/2), w: Math.round(f.w), h: Math.round(f.h) });
     renderCropBox();
     reanalyzeSource();
   }
@@ -1070,7 +1106,7 @@
   }
 
   // Draws src (a rect of img, in natural px) onto the export canvas.
-  function paintImage(img, src, tw, th, mode, bgMode, fillHex) {
+  function paintImage(img, src, tw, th, mode, bgMode, fillHex, flatten) {
     const w = src.w, h = src.h;
     let fw, fh, ox, oy, outW, outH;
     if (mode === 'cover') {
@@ -1093,6 +1129,13 @@
     canvas.width = outW; canvas.height = outH;
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, outW, outH);
+
+    // JPEG cannot store alpha. Lay down an opaque base so transparent source
+    // pixels flatten onto a known color instead of rendering as black.
+    if (flatten) {
+      ctx.fillStyle = (bgMode === 'color' ? (fillHex || '#ffffff') : '#ffffff');
+      ctx.fillRect(0, 0, outW, outH);
+    }
 
     if (mode === 'pad') {
       if (bgMode === 'blur') {
@@ -1122,10 +1165,9 @@
     if (!kind) kind = analyzeImage(img, src).kind;
     const mode = effectiveFit(kind);
 
-    const out = paintImage(img, src, tw, th, mode, bgMode, $('hexInput').value);
+    const out = paintImage(img, src, tw, th, mode, bgMode, $('hexInput').value, format === 'image/jpeg');
 
-    const keepAlpha = (mode === 'pad' && bgMode === 'transparent') || (mode === 'shrink' && hasAlpha(img, src));
-    const activeFormat = keepAlpha ? 'image/png' : format;
+    const activeFormat = format;
     const ext = activeFormat === 'image/jpeg' ? 'jpg' : activeFormat === 'image/webp' ? 'webp' : 'png';
     const base = file.name.replace(/\.[^.]+$/, '');
     const fileName = base + '_' + out.outW + 'x' + out.outH + '.' + ext;
@@ -1167,7 +1209,13 @@
     const tw = parseInt($('targetW').value) || 0;
     const th = parseInt($('targetH').value) || 0;
     const frame = $('fitFrame'), inner = $('fitInner'), read = $('fitRead');
-    if (!tw || !th) { read.innerHTML = '<span class="k">Enter a width and height.</span>'; return; }
+    const valid = syncDimValidity();
+    if (!valid.ok) {
+      frame.classList.remove('cropping', 'clear');
+      inner.style.width = '0'; inner.style.height = '0';
+      read.innerHTML = '<span class="k">' + esc(valid.msg) + '</span>';
+      return;
+    }
 
     frame.style.aspectRatio = tw + ' / ' + th;
 
@@ -1211,7 +1259,8 @@
       read.innerHTML = verdict +
         '<div><span class="k">exports at</span> <span class="v">' + tw + ' × ' + th + ' px</span></div>' +
         '<div><span class="k">image drawn at</span> <span class="v">' + fw + ' × ' + fh + ' px</span> <span class="k">(' + Math.round(scale*100) + '%' + (cropRect ? ' of the crop' : ' of the original') + ')</span></div>' +
-        '<div><span class="k">trimmed</span> <span class="v">' + cutX + ' px</span> <span class="k">each side</span> <span class="v">' + cutY + ' px</span> <span class="k">top &amp; bottom</span></div>';
+        '<div><span class="k">trimmed left/right</span> <span class="v">' + cutX + ' px</span> ' +
+        '<span class="k">·  top/bottom</span> <span class="v">' + cutY + ' px</span></div>';
       return;
     }
 
@@ -1250,18 +1299,21 @@
       '<div><span class="k">exports at</span> <span class="v">' + tw + ' × ' + th + ' px</span></div>' +
       '<div><span class="k">image drawn at</span> <span class="v">' + fw + ' × ' + fh + ' px</span> <span class="k">(' + Math.round(scale*100) + '%' + (cropRect ? ' of the crop' : ' of the original') + ')</span></div>' +
       '<div><span class="pad-key' + (transparentPad ? ' clear' : '') + '"></span><span class="k">' +
-        (transparentPad ? 'transparent padding' : 'padding') + '</span> <span class="v">' + padX + ' px</span> <span class="k">each side</span> <span class="v">' + padY + ' px</span> <span class="k">top &amp; bottom</span></div>' +
+        (transparentPad ? 'transparent padding' : 'padding') + '</span></div>' +
+      '<div><span class="k">left/right</span> <span class="v">' + padX + ' px</span> ' +
+        '<span class="k">·  top/bottom</span> <span class="v">' + padY + ' px</span></div>' +
       colorTip;
   }
 
   function updateSpec() {
-    const tw = parseInt($('targetW').value) || 0;
-    const th = parseInt($('targetH').value) || 0;
+    const v = dimsValid();
+    const tw = v.ok ? v.tw : 0, th = v.ok ? v.th : 0;
     const bgMode = $('bgMode').value;
     const padding = (fitMode === 'pad') || (fitMode === 'auto' && !(currentMode === 'single' && detectedKind && detectedKind.kind === 'lifestyle'));
-    const fmt = (padding && bgMode === 'transparent') ? 'image/png' : $('outputFormat').value;
+    const fmt = $('outputFormat').value;
     const name = fmt === 'image/jpeg' ? 'JPEG' : fmt === 'image/webp' ? 'WebP' : 'PNG';
     const lossy = (fmt === 'image/jpeg' || fmt === 'image/webp');
+    const clear = padding && bgMode === 'transparent' && fmt !== 'image/jpeg';
 
     let dims = (tw && th) ? tw + ' × ' + th : '—';
     if (fitMode === 'shrink' && tw && th) {
@@ -1274,8 +1326,9 @@
       }
     }
     $('specDims').textContent = dims;
-    $('specFormat').textContent = name + (lossy ? ' · Q' + ($('quality').value || 95)
-      : (padding && bgMode === 'transparent' ? ' · transparent' : ''));
+    $('specFormat').textContent = name +
+      (lossy ? ' · Q' + ($('quality').value || 95) : '') +
+      (clear ? ' · transparent' : '');
   }
 
   // ── Color & format controls ────────────────────────────────────────────────
@@ -1296,13 +1349,26 @@
     onFormatChange();
   }
   function onFormatChange() {
-    const bgMode = $('bgMode').value;
-    const padding = (fitMode === 'pad') || (fitMode === 'auto' && !(currentMode === 'single' && detectedKind && detectedKind.kind === 'lifestyle'));
-    const fmt = (padding && bgMode === 'transparent') ? 'image/png' : $('outputFormat').value;
-    const lossy = (fmt === 'image/jpeg' || fmt === 'image/webp');
+    const fmt = $('outputFormat').value;
+    const jpeg = fmt === 'image/jpeg';
+    const lossy = jpeg || fmt === 'image/webp';
+
+    // JPEG has no alpha channel, so transparent padding is not a real choice.
+    const clearOpt = $('bgMode').querySelector('option[value="transparent"]');
+    clearOpt.disabled = jpeg;
+    clearOpt.textContent = jpeg ? 'Nothing — not available for JPEG' : 'Nothing — leave it transparent';
+    let switched = false;
+    if (jpeg && $('bgMode').value === 'transparent') { $('bgMode').value = 'color'; switched = true; }
+
+    $('bgHelp').textContent = jpeg
+      ? (switched ? 'JPEG has no transparency, so the padding switched to a solid color.'
+                  : 'JPEG has no transparency. Any see-through areas are flattened onto the fill color.')
+      : '';
+    $('bgHelp').style.display = jpeg ? 'block' : 'none';
+
     $('qualityWrap').classList.toggle('dimmed', !lossy);
-    $('qualityHelp').textContent = lossy ? 'Higher means a larger file' :
-      (padding && bgMode === 'transparent' ? 'Transparent padding forces PNG, since JPEG has no transparency' : 'PNG is lossless, so quality does not apply');
+    $('qualityHelp').textContent = lossy ? 'Higher means a larger file' : 'PNG is lossless, so quality does not apply';
+    syncPadControls();
     updateSpec();
   }
 
@@ -1336,11 +1402,10 @@
     const mode = effectiveFit(detectedKind.kind);
 
     setProgress('paint', 62, mode === 'pad' ? 'Padding and drawing' : 'Drawing the image'); await tick();
-    const out = paintImage(img, src, tw, th, mode, bgMode, $('hexInput').value);
+    const out = paintImage(img, src, tw, th, mode, bgMode, $('hexInput').value, format === 'image/jpeg');
 
     setProgress('export', 84, 'Exporting'); await tick();
-    const keepAlpha = (mode === 'pad' && bgMode === 'transparent') || (mode === 'shrink' && hasAlpha(img, src));
-    const activeFormat = keepAlpha ? 'image/png' : format;
+    const activeFormat = format;
     const ext = activeFormat === 'image/jpeg' ? 'jpg' : activeFormat === 'image/webp' ? 'webp' : 'png';
     const base = currentFile.name.replace(/\.[^.]+$/, '');
     resultFileName = base + '_' + out.outW + 'x' + out.outH + '.' + ext;
@@ -1350,8 +1415,8 @@
     $('previewSquared').src = resultDataUrl;
     $('resultLabel').textContent = 'Resized — ' + out.outW + ' × ' + out.outH;
     $('previewSection').style.display = 'block';
-    $('processBtn').disabled = false;
     $('downloadBtn').disabled = false;
+    syncDimValidity();
     showStatus('Exported at ' + out.outW + ' × ' + out.outH + ' px, ' +
       (cropRect ? 'from your crop, ' : '') +
       (mode === 'cover' ? 'filled with no padding' :
@@ -1416,7 +1481,7 @@
     overallBar.classList.add('done');
     overallLabel.textContent = doneCount + ' of ' + bulkQueue.length + ' finished';
 
-    $('bulkProcessBtn').disabled = false;
+    syncDimValidity();
     if (bulkResults.length > 0) $('bulkDownloadBtn').disabled = false;
     const errors = bulkQueue.length - doneCount;
     if (errors > 0) {
