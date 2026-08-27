@@ -1,76 +1,3 @@
-
-Claude finished the response
-
-
-Message collapsed
-
-Reading frontend design skill before redesigning the UI
-Reading frontend design skill before redesigning the UI
-I'll rebuild the interface. Let me look at the design skill's guidance first, then write it.
-
-
-Created a file, read a file
-Created a file, read a file
-All the logic works exactly as before, including the google.script.run calls and the saveImageToDrive(base64, mimeType, fileName, folderId) signature, so you can drop this straight into your Apps Script project as Index.html.
-
-What changed:
-
-The look. Off the Google Material palette and onto a neutral graphite UI where the only saturated color is amber, reserved for one thing: padding. Instrument Sans for the interface, IBM Plex Mono for every pixel value, dimension, and file size. Numbers reading as numbers is most of what makes a tool like this feel precise.
-
-A live fit preview. This replaces the sentence that used to describe the fit. The frame takes on your target aspect ratio, your actual uploaded image sits inside it at true scale, and the hatched amber area is the padding you're about to add. Change a preset or type a new height and it redraws. You can see a bad crop choice before you process anything.
-
-No emoji. Inline SVG icons on the buttons, status pills instead of ✅/❌/⏳ in the queue. The emoji were the single biggest thing making it read as a personal script rather than a tool.
-
-Copy rewritten. "Bulk Upload" → "Batch", "Solid color" → "A solid color" under a label reading "Fill the padding with", so the sentence completes itself. Errors say what to do: "That file is not an image. Pick a PNG, JPEG, WebP, or GIF." Also fixed a real gap — the Drive buttons now tell you they need Apps Script instead of throwing an undefined error if you open the file locally.
-
-Small functional adds. A spec readout in the header showing current output size and format at all times, and the Quality field dims itself when PNG is selected since it does nothing there.
-
-
-Index
-Code · HTML 
-Looking better.  Can you look and if it's a lifestyle image that we don't fill in padding or a background..  Make sense?
-
-
-Thought for 1m 3s
-Thought for 1m 3s
-Yes, that makes sense. A studio shot on white should get padded; a lifestyle photo shouldn't get bars down the sides, it should fill the frame and lose a bit off the edges. Let me build detection for that.
-
-
-Edited 19 files, ran 2 commands, read a file · 5 notes
-Edited 19 files, ran 2 commands, read a file · 5 notes
-Makes sense, and it's now automatic.
-
-How it decides. It samples a thin band around the border of a downscaled copy of the image. A product shot sits on a plain backdrop, so nearly every border pixel is the same color. A lifestyle photo runs all the way to the edges, so they're all over the place. Above 88% uniform border it pads; below 70% it fills; in between it leans on brightness, since a bright near-uniform edge is almost always a studio backdrop. A cutout with transparent edges always gets padded.
-
-I ran it against synthetic cases: pure white, off-white with sensor noise, white with a drop shadow, gray seamless, and transparent cutouts all classify as pad. Outdoor, interior, and sky-heavy photos all classify as fill.
-
-What "fill" does. Scales to cover the output size and center-crops the overflow, so the whole frame is image and no background is used at all. The padding controls dim themselves when they're not going to be used.
-
-Three new things in the UI:
-
-A "When the image doesn't match that shape" control with Decide per image (default), Always pad, and Always fill. The override is there for when the detection is wrong on a specific batch.
-
-The fit diagram now shows both behaviors. In fill mode the frame is solid image with no amber hatching, and the readout tells you exactly what gets trimmed: "240 px each side, 0 px top & bottom." You can see whether a crop is going to cut a product in half before you commit.
-
-Every row in the batch queue is analyzed on drop and tagged Pad or Fill, so a mixed folder of product and lifestyle shots handles itself in one pass. The summary reads "All 40 images resized to 1080 × 1080 — 31 padded, 9 filled."
-
-One extra I threw in while I was in there: when it detects a plain backdrop that isn't the color you're padding with, it offers a one-click "match backdrop 
-#f7f7f7" under the diagram. Padding pure white next to an off-white studio backdrop leaves a visible seam, and that's an easy thing to miss until the image is live.
-
-
-Index
-Code · HTML 
-
-You’ve used 75% of your usage
-Request sent to admin
-
-
-
-
-Claude is AI and can make mistakes. Please double-check responses.
-
-
-Index · HTML
 <!DOCTYPE html>
 <!-- Index.html -->
 <html>
@@ -117,7 +44,7 @@ Index · HTML
       padding:28px;
     }
     :focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:4px}
- 
+
     /* ── Header ── */
     .head{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;flex-wrap:wrap}
     .eyebrow{
@@ -133,13 +60,13 @@ Index · HTML
     }
     .spec b{display:block;font-weight:600;font-size:14px;letter-spacing:-.01em}
     .spec span{display:block;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-top:3px}
- 
+
     /* ── Sections ── */
     .sec{display:flex;align-items:center;gap:10px;margin:30px 0 14px}
     .sec-num{font-family:var(--mono);font-size:11px;font-weight:500;color:var(--pad)}
     .sec h2{font-size:13px;font-weight:600;letter-spacing:.01em}
     .sec-rule{flex:1;height:1px;background:var(--line-soft)}
- 
+
     /* ── Mode toggle ── */
     .modes{display:inline-flex;background:var(--paper);border-radius:8px;padding:3px;gap:3px;margin-top:22px}
     .mode-btn{
@@ -149,7 +76,7 @@ Index · HTML
     }
     .mode-btn:hover{color:var(--ink)}
     .mode-btn.active{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
- 
+
     /* ── Drop zone ── */
     .drop{
       border:1px dashed #cfd1d5;border-radius:var(--r);padding:26px 20px;
@@ -162,7 +89,7 @@ Index · HTML
     .drop-hint{font-size:12px;color:var(--muted);margin-top:3px}
     .drop svg{margin-bottom:10px}
     #fileInfo{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);margin-top:10px}
- 
+
     /* ── Queue ── */
     .queue{margin-top:14px;display:none}
     .queue-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
@@ -183,7 +110,7 @@ Index · HTML
     .pill.error{background:rgba(179,38,30,.10);color:var(--err)}
     .qitem-x{background:none;border:none;cursor:pointer;color:#b4b8bd;font-size:17px;line-height:1;padding:0 2px;flex-shrink:0}
     .qitem-x:hover{color:var(--err)}
- 
+
     /* ── Presets ── */
     .presets{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px}
     .preset{
@@ -195,7 +122,7 @@ Index · HTML
     .preset b{display:block;font-family:var(--mono);font-size:11.5px;font-weight:500}
     .preset small{display:block;font-size:10px;color:var(--muted);margin-top:1px}
     .preset.active small{color:rgba(255,255,255,.7)}
- 
+
     /* ── Dimensions ── */
     .dims{display:grid;grid-template-columns:1fr 20px 1fr;gap:10px;align-items:end}
     .field label,.lbl{display:block;font-size:12px;font-weight:500;color:var(--ink-2);margin-bottom:6px}
@@ -208,7 +135,7 @@ Index · HTML
     .times{font-family:var(--mono);font-size:14px;color:var(--muted);text-align:center;padding-bottom:12px}
     .lock{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2);cursor:pointer;user-select:none;margin-top:12px}
     .lock input{width:15px;height:15px;cursor:pointer;accent-color:var(--ink)}
- 
+
     /* ── Fit mode ── */
     .fitmode-row{margin-top:20px}
     .fitmode{display:inline-flex;background:var(--paper);border-radius:8px;padding:3px;gap:3px}
@@ -233,7 +160,7 @@ Index · HTML
     }
     .linkbtn:hover{color:var(--pad)}
     .swatch{display:inline-block;width:9px;height:9px;border-radius:2px;border:1px solid rgba(20,22,26,.2);vertical-align:-1px;margin-right:5px}
- 
+
     /* ── Fit diagram (signature) ── */
     .fit{
       margin-top:18px;border:1px solid var(--line);border-radius:var(--r);
@@ -263,7 +190,7 @@ Index · HTML
       background-color:var(--pad-tint);border:1px solid var(--pad-line);
       background-image:repeating-linear-gradient(45deg,transparent 0 3px,var(--pad-line) 3px 4px);
       margin-right:6px;vertical-align:-1px}
- 
+
     /* ── Options ── */
     .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
     select,input[type="text"],input[type="number"]{
@@ -280,7 +207,7 @@ Index · HTML
     }
     .color-row input[type="text"]{font-family:var(--mono);font-size:13px}
     .help{font-size:11.5px;color:var(--muted);margin-top:6px}
- 
+
     /* ── Buttons ── */
     .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:26px}
     .btn{
@@ -295,7 +222,7 @@ Index · HTML
     .btn-ghost:hover:not(:disabled){border-color:var(--ink-2)}
     .btn-sm{padding:5px 10px;font-size:12px}
     .btn:disabled{opacity:.35;cursor:not-allowed}
- 
+
     /* ── Progress ── */
     .prog{display:none;margin-top:24px;padding-top:22px;border-top:1px solid var(--line-soft)}
     .prog.visible{display:block}
@@ -319,7 +246,7 @@ Index · HTML
     .overall-head{display:flex;justify-content:space-between;gap:12px;font-size:12.5px;margin-bottom:9px}
     .overall-head span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .overall-head span:last-child{font-family:var(--mono);font-weight:500;flex-shrink:0}
- 
+
     /* ── Preview ── */
     .previews{display:grid;grid-template-columns:1fr 1fr;gap:14px}
     .pv-label{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:7px}
@@ -332,14 +259,14 @@ Index · HTML
       background-size:14px 14px;background-position:0 0,0 7px,7px -7px,-7px 0;
     }
     canvas{display:none}
- 
+
     /* ── Status ── */
     .status{display:none;margin-top:18px;font-size:13px;padding:11px 14px;border-radius:8px;border:1px solid var(--line);background:#fcfcfc}
     .status.info{display:block}
     .status.ok{display:block;border-color:rgba(31,122,77,.28);background:rgba(31,122,77,.06);color:var(--ok)}
     .status.error{display:block;border-color:rgba(179,38,30,.28);background:rgba(179,38,30,.05);color:var(--err)}
     .status a{color:inherit}
- 
+
     @media (max-width:560px){
       body{padding:16px 12px 40px}
       .card{padding:20px}
@@ -357,7 +284,7 @@ Index · HTML
 <body>
 <div class="app">
 <div class="card">
- 
+
   <header class="head">
     <div>
       <p class="eyebrow">Image utility</p>
@@ -366,12 +293,12 @@ Index · HTML
     </div>
     <div class="spec"><b id="specDims">1080 × 1080</b><span id="specFormat">PNG</span></div>
   </header>
- 
+
   <div class="modes">
     <button class="mode-btn active" id="modeSingle" onclick="setMode('single')">One image</button>
     <button class="mode-btn" id="modeBulk" onclick="setMode('bulk')">Batch</button>
   </div>
- 
+
   <!-- ── SINGLE ── -->
   <div id="singleSection">
     <div class="sec"><span class="sec-num">01</span><h2>Source image</h2><span class="sec-rule"></span></div>
@@ -385,7 +312,7 @@ Index · HTML
       <p id="fileInfo"></p>
     </div>
   </div>
- 
+
   <!-- ── BULK ── -->
   <div id="bulkSection" style="display:none">
     <div class="sec"><span class="sec-num">01</span><h2>Source images</h2><span class="sec-rule"></span></div>
@@ -397,7 +324,7 @@ Index · HTML
       <p class="drop-title">Choose images or drop them here</p>
       <p class="drop-hint">Select as many as you like — they all use the same settings</p>
     </div>
- 
+
     <div class="queue" id="bulkQueue">
       <div class="queue-head">
         <span class="queue-count" id="bulkQueueCount">0 QUEUED</span>
@@ -405,7 +332,7 @@ Index · HTML
       </div>
       <div class="queue-list" id="bulkQueueList"></div>
     </div>
- 
+
     <div class="overall" id="bulkOverall">
       <div class="overall-head">
         <span id="bulkOverallLabel">Processing</span>
@@ -414,7 +341,7 @@ Index · HTML
       <div class="track"><div class="bar" id="bulkOverallBar"></div></div>
     </div>
   </div>
- 
+
   <!-- ── DIMENSIONS ── -->
   <div class="sec"><span class="sec-num">02</span><h2>Output size</h2><span class="sec-rule"></span></div>
   <div class="presets">
@@ -426,7 +353,7 @@ Index · HTML
     <button class="preset" onclick="applyPreset(3840,2160,this)"><b>3840 × 2160</b><small>4K UHD</small></button>
     <button class="preset" onclick="applyPreset(3840,3840,this)"><b>3840 × 3840</b><small>Max square</small></button>
   </div>
- 
+
   <div class="dims">
     <div class="field">
       <label for="targetW">Width</label>
@@ -442,7 +369,7 @@ Index · HTML
     <input type="checkbox" id="lockSquare" onchange="onLockChange()" />
     Keep it square
   </label>
- 
+
   <div class="fitmode-row">
     <span class="lbl">When the image doesn't match that shape</span>
     <div class="fitmode" id="fitModeCtl">
@@ -452,12 +379,12 @@ Index · HTML
     </div>
     <p class="help" id="fitModeHelp">Product shots on a plain backdrop get padded. Lifestyle photos fill the frame instead, so you never get bars down the sides.</p>
   </div>
- 
+
   <div class="fit">
     <div class="fit-frame" id="fitFrame"><div class="fit-inner" id="fitInner"></div></div>
     <div class="fit-read" id="fitRead"></div>
   </div>
- 
+
   <!-- ── BACKGROUND & FORMAT ── -->
   <div class="sec"><span class="sec-num">03</span><h2>Padding and file type</h2><span class="sec-rule"></span></div>
   <div class="grid2">
@@ -490,12 +417,12 @@ Index · HTML
       <p class="help" id="qualityHelp">Applies to JPEG and WebP</p>
     </div>
   </div>
- 
+
   <!-- ── DRIVE ── -->
   <div class="sec"><span class="sec-num">04</span><h2>Where to save in Drive</h2><span class="sec-rule"></span></div>
   <input type="text" id="folderId" placeholder="Paste a Drive folder ID" />
   <p class="help">Leave this blank to save into the top level of My Drive. Only needed if you use the Drive buttons.</p>
- 
+
   <!-- ── ACTIONS ── -->
   <div id="singleActions" class="actions">
     <button class="btn btn-primary" id="processBtn" onclick="processImage()" disabled>
@@ -511,7 +438,7 @@ Index · HTML
       Save to Drive
     </button>
   </div>
- 
+
   <div id="bulkActions" class="actions" style="display:none">
     <button class="btn btn-primary" id="bulkProcessBtn" onclick="processBulk()" disabled>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 15l5-5 4 4 3-3 6 6"/></svg>
@@ -526,7 +453,7 @@ Index · HTML
       Save all to Drive
     </button>
   </div>
- 
+
   <div class="prog" id="progressWrap">
     <div class="prog-head">
       <span class="prog-label" id="progressLabel">Starting</span>
@@ -535,9 +462,9 @@ Index · HTML
     <div class="track"><div class="bar" id="progressBar"></div></div>
     <div class="steps" id="progressSteps"></div>
   </div>
- 
+
   <canvas id="canvas"></canvas>
- 
+
   <div id="previewSection" style="display:none">
     <div class="sec"><span class="sec-num">05</span><h2>Result</h2><span class="sec-rule"></span></div>
     <div class="previews">
@@ -545,11 +472,11 @@ Index · HTML
       <div><p class="pv-label" id="resultLabel">Resized</p><img id="previewSquared" alt="Resized image" /></div>
     </div>
   </div>
- 
+
   <div class="status" id="status"></div>
 </div>
 </div>
- 
+
 <!-- JSZip for batch ZIP download -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
@@ -563,14 +490,14 @@ Index · HTML
   // Bulk
   let bulkQueue = []; // { file, dataUrl, status, resultDataUrl, resultFileName }
   let bulkResults = [];
- 
+
   // Fit handling
   let fitMode = 'auto';           // 'auto' | 'pad' | 'cover'
   let detectedKind = null;        // single-image analysis result
- 
+
   const $ = id => document.getElementById(id);
   function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
- 
+
   // ── Studio vs lifestyle detection ──────────────────────────────────────────
   // Samples a thin band around the border of a downscaled copy. A product shot
   // sits on a plain backdrop, so its border pixels are nearly all the same
@@ -585,7 +512,7 @@ Index · HTML
     let d;
     try { d = x.getImageData(0, 0, S, S).data; }
     catch (e) { return { kind:'product', uniformity:0, transparent:0, edgeHex:'#ffffff', unknown:true }; }
- 
+
     const edge = [];
     for (let y = 0; y < S; y++) {
       for (let px = 0; px < S; px++) {
@@ -594,37 +521,37 @@ Index · HTML
         edge.push([d[i], d[i+1], d[i+2], d[i+3]]);
       }
     }
- 
+
     const clear = edge.filter(p => p[3] < 24).length / edge.length;
     const opaque = edge.filter(p => p[3] >= 24);
     if (clear > 0.15) return { kind:'product', uniformity:1, transparent:clear, edgeHex:'#ffffff', cutout:true };
     if (!opaque.length) return { kind:'product', uniformity:1, transparent:1, edgeHex:'#ffffff', cutout:true };
- 
+
     let sr=0, sg=0, sb=0;
     opaque.forEach(p => { sr+=p[0]; sg+=p[1]; sb+=p[2]; });
     const mr = sr/opaque.length, mg = sg/opaque.length, mb = sb/opaque.length;
- 
+
     const near = opaque.filter(p =>
       Math.abs(p[0]-mr) <= 20 && Math.abs(p[1]-mg) <= 20 && Math.abs(p[2]-mb) <= 20
     ).length;
     const uniformity = near / opaque.length;
     const lum = 0.2126*mr + 0.7152*mg + 0.0722*mb;
- 
+
     let kind;
     if (uniformity >= 0.88) kind = 'product';
     else if (uniformity <= 0.70) kind = 'lifestyle';
     else kind = (lum > 232 && uniformity > 0.78) ? 'product' : 'lifestyle';
- 
+
     const hex = '#' + [mr, mg, mb].map(v => Math.round(v).toString(16).padStart(2,'0')).join('');
     return { kind, uniformity, transparent: clear, edgeHex: hex, cutout: false };
   }
- 
+
   function effectiveFit(kind) {
     if (fitMode === 'pad')   return 'pad';
     if (fitMode === 'cover') return 'cover';
     return kind === 'lifestyle' ? 'cover' : 'pad';
   }
- 
+
   function setFitMode(mode) {
     fitMode = mode;
     document.querySelectorAll('#fitModeCtl button').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
@@ -635,7 +562,7 @@ Index · HTML
     renderBulkQueue();
     updateFitInfo();
   }
- 
+
   function useDetectedColor() {
     if (!detectedKind) return;
     $('hexInput').value = detectedKind.edgeHex;
@@ -644,7 +571,7 @@ Index · HTML
     onBgModeChange();
     updateFitInfo();
   }
- 
+
   // ── Mode switch ────────────────────────────────────────────────────────────
   function setMode(mode) {
     currentMode = mode;
@@ -659,7 +586,7 @@ Index · HTML
     clearStatus();
     updateFitInfo();
   }
- 
+
   // ── Progress ───────────────────────────────────────────────────────────────
   const STEPS = [
     { key:'load', label:'Load' }, { key:'canvas', label:'Canvas' },
@@ -693,7 +620,7 @@ Index · HTML
   }
   function hideProgress() { $('progressWrap').classList.remove('visible'); }
   function tick() { return new Promise(r => setTimeout(r, 30)); }
- 
+
   // ── Read file as DataURL ───────────────────────────────────────────────────
   function readFileAsDataUrl(file) {
     return new Promise((resolve, reject) => {
@@ -715,7 +642,7 @@ Index · HTML
       r1.readAsDataURL(file);
     });
   }
- 
+
   // ── Single drag & drop ────────────────────────────────────────────────────
   const dz = $('dropZone');
   dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
@@ -724,7 +651,7 @@ Index · HTML
     e.preventDefault(); dz.classList.remove('drag-over');
     if (e.dataTransfer.files[0]) onFileSelected(e.dataTransfer.files[0]);
   });
- 
+
   function onFileSelected(file) {
     if (!file || !file.type.startsWith('image/')) {
       showStatus('That file is not an image. Pick a PNG, JPEG, WebP, or GIF.', 'error'); return;
@@ -737,7 +664,7 @@ Index · HTML
     hideProgress();
     $('fileInfo').textContent = file.name + '  ·  ' + (file.size/1024/1024).toFixed(2) + ' MB  ·  reading';
     showStatus('Reading the file.', 'info');
- 
+
     readFileAsDataUrl(file).then(dataUrl => {
       cachedDataUrl = dataUrl;
       const probe = new Image();
@@ -755,7 +682,7 @@ Index · HTML
       $('previewOriginal').src = dataUrl;
     }).catch(err => showStatus('The file could not be read — ' + err.message, 'error'));
   }
- 
+
   // ── Bulk drag & drop ──────────────────────────────────────────────────────
   const bdz = $('bulkDropZone');
   bdz.addEventListener('dragover', e => { e.preventDefault(); bdz.classList.add('drag-over'); });
@@ -764,7 +691,7 @@ Index · HTML
     e.preventDefault(); bdz.classList.remove('drag-over');
     if (e.dataTransfer.files.length) onBulkFilesSelected(e.dataTransfer.files);
   });
- 
+
   async function onBulkFilesSelected(files) {
     const arr = Array.from(files).filter(f => f.type.startsWith('image/'));
     if (!arr.length) { showStatus('None of those files are images.', 'error'); return; }
@@ -778,7 +705,7 @@ Index · HTML
     });
     renderBulkQueue();
     $('bulkProcessBtn').disabled = bulkQueue.length === 0;
- 
+
     if (added.length) {
       showStatus('Checking ' + added.length + ' image' + (added.length !== 1 ? 's' : '') + '.', 'info');
       for (const item of added) {
@@ -797,13 +724,13 @@ Index · HTML
         renderBulkQueue();
       }
     }
- 
+
     const fills = bulkQueue.filter(i => effectiveFit(i.kind || 'product') === 'cover').length;
     const pads = bulkQueue.length - fills;
     showStatus(bulkQueue.length + ' image' + (bulkQueue.length !== 1 ? 's' : '') + ' queued — ' +
       pads + ' to pad, ' + fills + ' to fill. Set your output size, then resize all.', 'info');
   }
- 
+
   function renderBulkQueue() {
     const list = $('bulkQueueList');
     const queueEl = $('bulkQueue');
@@ -827,14 +754,14 @@ Index · HTML
       list.appendChild(row);
     });
   }
- 
+
   function removeFromQueue(idx) {
     bulkQueue.splice(idx, 1);
     renderBulkQueue();
     $('bulkProcessBtn').disabled = bulkQueue.length === 0;
     if (!bulkQueue.length) clearStatus();
   }
- 
+
   function clearQueue() {
     bulkQueue = []; bulkResults = [];
     renderBulkQueue();
@@ -844,7 +771,7 @@ Index · HTML
     $('bulkOverall').classList.remove('visible');
     clearStatus();
   }
- 
+
   // ── Core render: one image → dataURL ─────────────────────────────────────
   async function renderOneImage(file, dataUrl, kind) {
     const tw = parseInt($('targetW').value);
@@ -852,23 +779,23 @@ Index · HTML
     const bgMode = $('bgMode').value;
     const format = $('outputFormat').value;
     const quality = parseInt($('quality').value) / 100;
- 
+
     const img = await new Promise((resolve, reject) => {
       const i = new Image();
       i.onload = () => resolve(i);
       i.onerror = () => reject(new Error('Image element failed to render for ' + file.name));
       i.src = dataUrl;
     });
- 
+
     const w = img.naturalWidth, h = img.naturalHeight;
     if (!kind) kind = analyzeImage(img).kind;
     const mode = effectiveFit(kind);
- 
+
     const canvas = $('canvas');
     canvas.width = tw; canvas.height = th;
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, tw, th);
- 
+
     if (mode === 'cover') {
       const scale = Math.max(tw / w, th / h);
       const fw = Math.round(w * scale), fh = Math.round(h * scale);
@@ -889,7 +816,7 @@ Index · HTML
       }
       ctx.drawImage(img, ox, oy, fw, fh);
     }
- 
+
     const transparentOut = (bgMode === 'transparent' && mode === 'pad');
     const activeFormat = transparentOut ? 'image/png' : format;
     const ext = activeFormat === 'image/jpeg' ? 'jpg' : activeFormat === 'image/webp' ? 'webp' : 'png';
@@ -898,7 +825,7 @@ Index · HTML
     const outDataUrl = canvas.toDataURL(activeFormat, quality);
     return { dataUrl: outDataUrl, fileName };
   }
- 
+
   // ── Presets & dimensions ───────────────────────────────────────────────────
   function applyPreset(w, h, btn) {
     document.querySelectorAll('.preset').forEach(b => b.classList.remove('active'));
@@ -924,7 +851,7 @@ Index · HTML
     }
     updateFitInfo();
   }
- 
+
   // ── Live fit diagram ───────────────────────────────────────────────────────
   function updateFitInfo() {
     updateSpec();
@@ -933,9 +860,9 @@ Index · HTML
     const th = parseInt($('targetH').value) || 0;
     const frame = $('fitFrame'), inner = $('fitInner'), read = $('fitRead');
     if (!tw || !th) { read.innerHTML = '<span class="k">Enter a width and height.</span>'; return; }
- 
+
     frame.style.aspectRatio = tw + ' / ' + th;
- 
+
     if (!originalWidth || !originalHeight) {
       frame.classList.remove('cropping');
       inner.style.width = '0'; inner.style.height = '0';
@@ -945,11 +872,11 @@ Index · HTML
         '<div class="k">Upload an image to see how it fits.</div>';
       return;
     }
- 
+
     const kind = detectedKind ? detectedKind.kind : 'product';
     const mode = effectiveFit(kind);
     if (cachedDataUrl) inner.style.backgroundImage = 'url("' + cachedDataUrl + '")';
- 
+
     let verdict = '';
     if (detectedKind) {
       if (fitMode !== 'auto') {
@@ -962,7 +889,7 @@ Index · HTML
         verdict = '<div class="verdict crop">Lifestyle photo — filling the frame</div>';
       }
     }
- 
+
     if (mode === 'cover') {
       frame.classList.add('cropping');
       const scale = Math.max(tw / originalWidth, th / originalHeight);
@@ -976,15 +903,15 @@ Index · HTML
         '<div><span class="k">trimmed</span> <span class="v">' + cutX + ' px</span> <span class="k">each side</span> <span class="v">' + cutY + ' px</span> <span class="k">top &amp; bottom</span></div>';
       return;
     }
- 
+
     frame.classList.remove('cropping');
     const scale = Math.min(tw / originalWidth, th / originalHeight);
     const fw = Math.round(originalWidth * scale), fh = Math.round(originalHeight * scale);
     const padX = Math.floor((tw - fw) / 2), padY = Math.floor((th - fh) / 2);
- 
+
     inner.style.width  = (fw / tw * 100) + '%';
     inner.style.height = (fh / th * 100) + '%';
- 
+
     let colorTip = '';
     if (detectedKind && !detectedKind.cutout && kind === 'product' &&
         $('bgMode').value === 'color' &&
@@ -992,14 +919,14 @@ Index · HTML
       colorTip = '<div><span class="swatch" style="background:' + detectedKind.edgeHex + '"></span>' +
         '<button class="linkbtn" onclick="useDetectedColor()">match backdrop ' + detectedKind.edgeHex + '</button></div>';
     }
- 
+
     read.innerHTML = verdict +
       '<div><span class="k">output</span> <span class="v">' + tw + ' × ' + th + ' px</span></div>' +
       '<div><span class="k">image</span> <span class="v">' + fw + ' × ' + fh + ' px</span> <span class="k">(' + Math.round(scale*100) + '%)</span></div>' +
       '<div><span class="pad-key"></span><span class="k">padding</span> <span class="v">' + padX + ' px</span> <span class="k">sides</span> <span class="v">' + padY + ' px</span> <span class="k">top &amp; bottom</span></div>' +
       colorTip;
   }
- 
+
   function updateSpec() {
     const tw = parseInt($('targetW').value) || 0;
     const th = parseInt($('targetH').value) || 0;
@@ -1010,7 +937,7 @@ Index · HTML
     $('specDims').textContent = (tw && th) ? tw + ' × ' + th : '—';
     $('specFormat').textContent = name + (lossy ? ' · Q' + ($('quality').value || 95) : (bgMode === 'transparent' ? ' · transparent' : ''));
   }
- 
+
   // ── Color & format controls ────────────────────────────────────────────────
   function syncHex() { $('hexInput').value = $('colorPicker').value; }
   function syncColor() {
@@ -1037,7 +964,7 @@ Index · HTML
       (bgMode === 'transparent' ? 'Transparent output is always PNG' : 'PNG is lossless, so quality does not apply');
     updateSpec();
   }
- 
+
   // ── Single: process ────────────────────────────────────────────────────────
   async function processImage() {
     if (!currentFile || !cachedDataUrl) { showStatus('Upload an image first.', 'error'); return; }
@@ -1045,16 +972,16 @@ Index · HTML
     const th = parseInt($('targetH').value);
     if (!tw || !th || tw < 1 || th < 1) { showStatus('Enter a width and height of at least 1 px.', 'error'); return; }
     if (tw > 8000 || th > 8000) { showStatus('8000 px is the largest dimension this tool handles.', 'error'); return; }
- 
+
     $('processBtn').disabled = true;
     $('downloadBtn').disabled = true;
     $('driveBtn').disabled = true;
     $('previewSection').style.display = 'none';
     $('status').className = 'status';
- 
+
     buildStepDots();
     setProgress('load', 10, 'Loading the image'); await tick();
- 
+
     const img = await new Promise((resolve, reject) => {
       const i = new Image();
       i.onload = () => resolve(i);
@@ -1062,20 +989,20 @@ Index · HTML
       i.src = cachedDataUrl;
     }).catch(err => { showStatus('The image could not be rendered: ' + err.message, 'error'); $('processBtn').disabled = false; return null; });
     if (!img) return;
- 
+
     const w = img.naturalWidth, h = img.naturalHeight;
     const bgMode = $('bgMode').value;
     const format = $('outputFormat').value;
     const quality = parseInt($('quality').value) / 100;
     if (!detectedKind) detectedKind = analyzeImage(img);
     const mode = effectiveFit(detectedKind.kind);
- 
+
     setProgress('canvas', 25, 'Setting up the canvas'); await tick();
     const canvas = $('canvas');
     canvas.width = tw; canvas.height = th;
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, tw, th);
- 
+
     setProgress('background', 45, mode === 'cover' ? 'No padding needed' : 'Filling the padding'); await tick();
     let fw, fh, ox, oy;
     if (mode === 'cover') {
@@ -1097,17 +1024,17 @@ Index · HTML
         ctx.fillRect(0,0,tw,th);
       }
     }
- 
+
     setProgress('draw', 68, 'Drawing the image'); await tick();
     ctx.drawImage(img, ox, oy, fw, fh);
- 
+
     setProgress('export', 85, 'Exporting'); await tick();
     const activeFormat = (bgMode === 'transparent' && mode === 'pad') ? 'image/png' : format;
     const ext = activeFormat === 'image/jpeg' ? 'jpg' : activeFormat === 'image/webp' ? 'webp' : 'png';
     const base = currentFile.name.replace(/\.[^.]+$/, '');
     resultFileName = base + '_' + tw + 'x' + th + '.' + ext;
     resultDataUrl = canvas.toDataURL(activeFormat, quality);
- 
+
     setProgress('done', 100, 'Finished'); await tick();
     $('previewSquared').src = resultDataUrl;
     $('resultLabel').textContent = 'Resized — ' + tw + ' × ' + th;
@@ -1119,7 +1046,7 @@ Index · HTML
       (mode === 'cover' ? 'filling the frame with no padding' : 'scaled to fit and padded') +
       '. Saved as ' + resultFileName, 'ok');
   }
- 
+
   // ── Bulk: process all ─────────────────────────────────────────────────────
   async function processBulk() {
     if (!bulkQueue.length) { showStatus('Add some images first.', 'error'); return; }
@@ -1127,23 +1054,23 @@ Index · HTML
     const th = parseInt($('targetH').value);
     if (!tw || !th || tw < 1 || th < 1) { showStatus('Enter a width and height of at least 1 px.', 'error'); return; }
     if (tw > 8000 || th > 8000) { showStatus('8000 px is the largest dimension this tool handles.', 'error'); return; }
- 
+
     $('bulkProcessBtn').disabled = true;
     $('bulkDownloadBtn').disabled = true;
     $('bulkDriveBtn').disabled = true;
     bulkResults = [];
- 
+
     const overall = $('bulkOverall');
     const overallBar = $('bulkOverallBar');
     const overallLabel = $('bulkOverallLabel');
     const overallPct = $('bulkOverallPct');
     overall.classList.add('visible');
     overallBar.classList.remove('done');
- 
+
     bulkQueue.forEach(item => { item.status = 'pending'; item.resultDataUrl = null; item.resultFileName = null; });
     const fillCount = bulkQueue.filter(i => effectiveFit(i.kind || 'product') === 'cover').length;
     renderBulkQueue();
- 
+
     let doneCount = 0;
     for (let idx = 0; idx < bulkQueue.length; idx++) {
       const item = bulkQueue[idx];
@@ -1153,10 +1080,10 @@ Index · HTML
       const pct = Math.round((idx / bulkQueue.length) * 100);
       overallBar.style.width = pct + '%';
       overallPct.textContent = pct + '%';
- 
+
       const rowEl = $('qitem-' + idx);
       if (rowEl) rowEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
- 
+
       try {
         if (!item.dataUrl) item.dataUrl = await readFileAsDataUrl(item.file);
         const { dataUrl, fileName } = await renderOneImage(item.file, item.dataUrl, item.kind);
@@ -1172,12 +1099,12 @@ Index · HTML
       renderBulkQueue();
       await tick();
     }
- 
+
     overallBar.style.width = '100%';
     overallPct.textContent = '100%';
     overallBar.classList.add('done');
     overallLabel.textContent = doneCount + ' of ' + bulkQueue.length + ' finished';
- 
+
     $('bulkProcessBtn').disabled = false;
     if (bulkResults.length > 0) {
       $('bulkDownloadBtn').disabled = false;
@@ -1191,7 +1118,7 @@ Index · HTML
         (doneCount - fillCount) + ' padded, ' + fillCount + ' filled.', 'ok');
     }
   }
- 
+
   // ── Bulk: download ZIP ─────────────────────────────────────────────────────
   async function downloadBulkZip() {
     if (!bulkResults.length) return;
@@ -1216,7 +1143,7 @@ Index · HTML
     }
     $('bulkDownloadBtn').disabled = false;
   }
- 
+
   // ── Drive ─────────────────────────────────────────────────────────────────
   function driveReady() {
     if (typeof google === 'undefined' || !google.script || !google.script.run) {
@@ -1225,7 +1152,7 @@ Index · HTML
     }
     return true;
   }
- 
+
   async function saveBulkToDrive() {
     if (!bulkResults.length) return;
     if (!driveReady()) return;
@@ -1250,12 +1177,12 @@ Index · HTML
       showStatus('All ' + uploaded + ' images saved to Drive.', 'ok');
     }
   }
- 
+
   function downloadResult() {
     if (!resultDataUrl) return;
     const a = document.createElement('a'); a.href = resultDataUrl; a.download = resultFileName; a.click();
   }
- 
+
   function saveToDrive() {
     if (!resultDataUrl) return;
     if (!driveReady()) return;
@@ -1274,7 +1201,7 @@ Index · HTML
       })
       .saveImageToDrive(base64, mimeType, resultFileName, $('folderId').value.trim());
   }
- 
+
   // ── Status ─────────────────────────────────────────────────────────────────
   function showStatus(msg, type) {
     const el = $('status');
@@ -1284,11 +1211,10 @@ Index · HTML
     const el = $('status');
     el.innerHTML = ''; el.className = 'status';
   }
- 
+
   // ── Init ───────────────────────────────────────────────────────────────────
   onBgModeChange();
   updateFitInfo();
 </script>
 </body>
 </html>
- 
