@@ -176,6 +176,8 @@
     .lock{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2);cursor:pointer;user-select:none;margin-top:12px}
     .lock input{width:15px;height:15px;cursor:pointer;accent-color:var(--ink)}
     .dims input.bad{border-color:var(--err)}
+    .drop-aside{margin-top:9px;font-size:12px;color:var(--muted);text-align:center}
+    .qitem-more{color:var(--muted);font-style:italic;justify-content:flex-start}
     .dim-error{display:none;margin-top:10px;font-size:12.5px;color:var(--err)}
     .dim-error.visible{display:block}
 
@@ -409,6 +411,11 @@
       <p class="drop-title" id="bulkDropTitle">Choose images or drop them here</p>
       <p class="drop-hint" id="bulkDropHint">Select as many as you like — they all use the same settings</p>
     </div>
+    <p class="drop-aside">
+      Drop a whole folder and every image inside it is picked up, subfolders included, or
+      <button class="linkbtn" onclick="document.getElementById('bulkFolderInput').click()">choose a folder</button>.
+      <input type="file" id="bulkFolderInput" webkitdirectory multiple hidden onchange="onBulkFilesSelected(this.files, true); this.value='';"/>
+    </p>
 
     <div class="queue" id="bulkQueue">
       <div class="queue-head">
@@ -534,6 +541,10 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 15l5-5 4 4 3-3 6 6"/></svg>
       <span id="bulkProcessBtnLabel">Resize all</span>
     </button>
+    <button class="btn btn-ghost" id="bulkStopBtn" onclick="stopBulk()" style="display:none">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
+      Stop
+    </button>
     <button class="btn btn-ghost" id="bulkDownloadBtn" onclick="downloadBulkZip()" disabled>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       Download ZIP
@@ -575,8 +586,9 @@
   let resultBlob = null, resultUrl = null, resultFileName = null;
   let singleReady = false;
   // Bulk
-  let bulkQueue = []; // { file, dataUrl, status, kind, blob, resultFileName }
+  let bulkQueue = []; // { file, status, kind, blob, resultFileName, plannedName }
   let bulkResults = [];
+  let bulkRunning = false, bulkCancel = false;
 
   // Fit handling
   let fitMode = 'auto';           // 'auto' | 'pad' | 'cover'
@@ -627,7 +639,7 @@
   // color. A lifestyle photo runs to the edges, so they are not.
   function analyzeImage(img, src) {
     const S = 72, BAND = 4;
-    src = src || { x:0, y:0, w:img.naturalWidth, h:img.naturalHeight };
+    src = src || Object.assign({ x:0, y:0 }, srcDims(img));
     const c = document.createElement('canvas');
     c.width = S; c.height = S;
     const x = c.getContext('2d', { willReadFrequently: true });
@@ -780,10 +792,11 @@
       ? 'Choose images to convert or drop them here'
       : 'Choose images or drop them here';
     $('bulkDropHint').textContent = keepOriginal
-      ? 'Mixed types are fine — they all come back as the type you pick'
+      ? 'Pick as many as you like — mixed types are fine, they all come back as the type you choose'
       : 'Select as many as you like — they all use the same settings';
 
     $('previewSection').style.display = 'none';
+    $('bulkStopBtn').style.display = 'none';
     hideProgress();
     clearStatus();
     syncModeControls();
@@ -823,6 +836,9 @@
   }
   function hideProgress() { $('progressWrap').classList.remove('visible'); }
   function tick() { return new Promise(r => setTimeout(r, 30)); }
+  // Same idea as tick, minus the deliberate pause: a batch only needs to let
+  // the browser paint, not to slow itself down once per image.
+  function yieldUi() { return new Promise(r => setTimeout(r, 0)); }
 
   // ── Read file as DataURL ───────────────────────────────────────────────────
   function readFileAsDataUrl(file) {
@@ -892,32 +908,93 @@
   const bdz = $('bulkDropZone');
   bdz.addEventListener('dragover', e => { e.preventDefault(); bdz.classList.add('drag-over'); });
   bdz.addEventListener('dragleave', () => bdz.classList.remove('drag-over'));
-  bdz.addEventListener('drop', e => {
+  bdz.addEventListener('drop', async e => {
     e.preventDefault(); bdz.classList.remove('drag-over');
+    // A dropped folder arrives in dataTransfer.files as a single entry with no
+    // type, which the image filter would throw away. The items list is the only
+    // place the directory is walkable, so try that first and keep files as the
+    // fallback for browsers without the entry API.
+    const items = e.dataTransfer.items;
+    if (items && items.length && typeof items[0].webkitGetAsEntry === 'function') {
+      const entries = [];
+      for (const it of items) {
+        const entry = it.webkitGetAsEntry();
+        if (entry) entries.push(entry);
+      }
+      if (entries.some(en => en.isDirectory)) {
+        showStatus('Reading the folder.', 'info');
+        const found = [];
+        for (const en of entries) await collectEntry(en, found);
+        onBulkFilesSelected(found, true);
+        return;
+      }
+    }
     if (e.dataTransfer.files.length) onBulkFilesSelected(e.dataTransfer.files);
   });
+
+  // Depth-first walk of a dropped directory. readEntries hands back at most a
+  // hundred or so per call, so it has to be drained in a loop.
+  async function collectEntry(entry, out, depth) {
+    depth = depth || 0;
+    if (depth > 12) return;
+    if (entry.isFile) {
+      const file = await new Promise(res => entry.file(res, () => res(null)));
+      if (file) out.push(file);
+      return;
+    }
+    if (!entry.isDirectory) return;
+    const reader = entry.createReader();
+    for (;;) {
+      const batch = await new Promise(res => reader.readEntries(res, () => res([])));
+      if (!batch.length) break;
+      for (const child of batch) await collectEntry(child, out, depth + 1);
+    }
+  }
 
   function fileList(files) {
     const names = files.slice(0, 3).map(f => f.name).join(', ');
     return names + (files.length > 3 ? ' and ' + (files.length - 3) + ' more' : '');
   }
 
-  async function onBulkFilesSelected(files) {
+  // Folder drops bring along .DS_Store and friends. Those are noise rather than
+  // rejected input, so they are dropped without being counted or reported.
+  const IMAGE_EXT = /\.(png|jpe?g|webp|gif|bmp|avif)$/i;
+  function looksLikeImage(f) { return f.type.startsWith('image/') || IMAGE_EXT.test(f.name); }
+  function isNoise(f) { return f.name.startsWith('.') || f.name === 'Thumbs.db'; }
+
+  async function onBulkFilesSelected(files, fromFolder) {
     const arr = [], skipped = [], dupes = [];
-    Array.from(files).forEach(f => (f.type.startsWith('image/') ? arr : skipped).push(f));
+    Array.from(files).forEach(f => {
+      if (isNoise(f)) return;
+      (looksLikeImage(f) ? arr : skipped).push(f);
+    });
+
+    // Walking a directory hands back files in whatever order the filesystem
+    // feels like, which would scramble the queue and the ZIP. Numeric collation
+    // so shot-2 lands before shot-10.
+    if (fromFolder) {
+      const key = f => f.webkitRelativePath || f.name;
+      arr.sort((a, b) => key(a).localeCompare(key(b), undefined, { numeric: true, sensitivity: 'base' }));
+    }
 
     if (!arr.length) {
-      showStatus(skipped.length === 1
-        ? esc(skipped[0].name) + ' is not an image, so nothing was added.'
-        : 'None of those ' + skipped.length + ' files are images: ' + esc(fileList(skipped)), 'error');
+      showStatus(!skipped.length
+        ? 'No images in there.'
+        : skipped.length === 1
+          ? esc(skipped[0].name) + ' is not an image, so nothing was added.'
+          : 'None of those ' + skipped.length + ' files are images: ' + esc(fileList(skipped)), 'error');
       return;
     }
 
+    // Keyed lookup instead of scanning the queue per file, which turns adding a
+    // few hundred images from quadratic into linear.
+    const seen = new Set(bulkQueue.map(q => q.file.name + '\u0000' + q.file.size));
     const added = [];
     arr.forEach(file => {
-      const exists = bulkQueue.some(q => q.file.name === file.name && q.file.size === file.size);
-      if (exists) { dupes.push(file); return; }
-      const item = { file, dataUrl: null, status: 'pending', kind: null, blob: null, resultFileName: null };
+      const key = file.name + '\u0000' + file.size;
+      if (seen.has(key)) { dupes.push(file); return; }
+      seen.add(key);
+      const item = { file, status: 'pending', kind: null, blob: null, resultFileName: null, plannedName: null };
       bulkQueue.push(item); added.push(item);
     });
     renderBulkQueue();
@@ -927,21 +1004,18 @@
     // makes that choice moot, so skip decoding every file twice.
     if (added.length && !keepOriginal) {
       showStatus('Checking ' + added.length + ' image' + (added.length !== 1 ? 's' : '') + '.', 'info');
+      let checked = 0;
       for (const item of added) {
         try {
-          const dataUrl = await readFileAsDataUrl(item.file);
-          const img = await new Promise((res, rej) => {
-            const i = new Image();
-            i.onload = () => res(i);
-            i.onerror = () => rej(new Error('decode failed'));
-            i.src = dataUrl;
-          });
-          item.kind = analyzeImage(img).kind;
+          const img = await decodeSource(item.file, item.file.name);
+          try { item.kind = analyzeImage(img).kind; } finally { releaseImage(img); }
         } catch (e) {
           item.kind = 'product';
         }
-        renderBulkQueue();
+        // Repainting the list once per image is what made a large batch crawl.
+        if (++checked % 25 === 0) { renderBulkQueue(); await yieldUi(); }
       }
+      renderBulkQueue();
     }
 
     let note = '';
@@ -956,46 +1030,81 @@
       skipped.length ? 'warn' : 'info');
   }
 
+  // A folder drop can be thousands of files. Every one of them is queued and
+  // converted, but only the first slice gets a row — past a few hundred the list
+  // stops being readable and starts costing real time on every repaint.
+  const QUEUE_ROW_CAP = 300;
+
+  function queueRowHtml(item, idx) {
+    const labels = { pending:'Waiting', active:'Working', done:'Done', kept:'Kept', error:'Failed' };
+    const fitOf = m => m === 'cover' ? 'Fill' : m === 'shrink' ? 'No pad' : 'Pad';
+    // In a convert-only run the interesting fact is the type change, not the fit.
+    const treat = keepOriginal
+      ? sourceType(item.file) + ' → ' + fmt($('outputFormat').value).label
+      : (item.kind ? fitOf(effectiveFit(item.kind)) : '·');
+    const size = item.blob
+      ? bytes(item.file.size) + ' → ' + bytes(item.blob.size)
+      : bytes(item.file.size);
+    return '<span class="qitem-name" title="' + esc(item.resultFileName || item.file.name) + '">' +
+        esc(item.resultFileName || item.file.name) + '</span>' +
+      '<span class="qitem-size">' + size + '</span>' +
+      '<span class="pill">' + esc(treat) + '</span>' +
+      '<span class="pill ' + item.status + '">' + labels[item.status] + '</span>' +
+      (item.status === 'pending'
+        ? '<button class="qitem-x" onclick="removeFromQueue(' + idx + ')" title="Remove" aria-label="Remove">×</button>'
+        : '<span style="width:20px"></span>');
+  }
+
   function renderBulkQueue() {
     const list = $('bulkQueueList');
     const queueEl = $('bulkQueue');
     if (!bulkQueue.length) { queueEl.style.display = 'none'; return; }
     queueEl.style.display = 'block';
     $('bulkQueueCount').textContent = bulkQueue.length + ' QUEUED';
-    list.innerHTML = '';
-    bulkQueue.forEach((item, idx) => {
+    const shown = Math.min(bulkQueue.length, QUEUE_ROW_CAP);
+    const frag = document.createDocumentFragment();
+    for (let idx = 0; idx < shown; idx++) {
       const row = document.createElement('div');
       row.className = 'qitem'; row.id = 'qitem-' + idx;
-      const labels = { pending:'Waiting', active:'Working', done:'Done', kept:'Kept', error:'Failed' };
-      const fitOf = m => m === 'cover' ? 'Fill' : m === 'shrink' ? 'No pad' : 'Pad';
-      // In a convert-only run the interesting fact is the type change, not the fit.
-      const treat = keepOriginal
-        ? sourceType(item.file) + ' → ' + fmt($('outputFormat').value).label
-        : (item.kind ? fitOf(effectiveFit(item.kind)) : '·');
-      const size = item.blob
-        ? bytes(item.file.size) + ' → ' + bytes(item.blob.size)
-        : bytes(item.file.size);
-      row.innerHTML =
-        '<span class="qitem-name" title="' + esc(item.resultFileName || item.file.name) + '">' +
-          esc(item.resultFileName || item.file.name) + '</span>' +
-        '<span class="qitem-size">' + size + '</span>' +
-        '<span class="pill">' + esc(treat) + '</span>' +
-        '<span class="pill ' + item.status + '">' + labels[item.status] + '</span>' +
-        (item.status === 'pending'
-          ? '<button class="qitem-x" onclick="removeFromQueue(' + idx + ')" title="Remove" aria-label="Remove">×</button>'
-          : '<span style="width:20px"></span>');
-      list.appendChild(row);
-    });
+      row.innerHTML = queueRowHtml(bulkQueue[idx], idx);
+      frag.appendChild(row);
+    }
+    if (bulkQueue.length > shown) {
+      const more = document.createElement('div');
+      more.className = 'qitem qitem-more';
+      more.innerHTML = '<span class="qitem-name">and ' + (bulkQueue.length - shown) +
+        ' more, all queued and included in the ZIP</span>';
+      frag.appendChild(more);
+    }
+    list.innerHTML = '';
+    list.appendChild(frag);
+  }
+
+  // Repainting every row for each finished file is quadratic, and a batch of a
+  // few hundred spends more time rebuilding the list than converting.
+  function updateQueueRow(idx) {
+    const row = $('qitem-' + idx);
+    if (row) row.innerHTML = queueRowHtml(bulkQueue[idx], idx);
   }
 
   function removeFromQueue(idx) {
+    // Splicing mid-run would shift the indices the lanes are working from.
+    if (bulkRunning) return;
     bulkQueue.splice(idx, 1);
     renderBulkQueue();
     syncDimValidity();
     if (!bulkQueue.length) clearStatus();
   }
 
+  function stopBulk() {
+    if (!bulkRunning) return;
+    bulkCancel = true;
+    $('bulkStopBtn').disabled = true;
+    showStatus('Stopping after the images already in flight.', 'warn');
+  }
+
   function clearQueue() {
+    if (bulkRunning) bulkCancel = true;
     bulkQueue = []; bulkResults = [];
     renderBulkQueue();
     syncDimValidity();
@@ -1209,8 +1318,36 @@
     });
   }
 
+  // <img> reports naturalWidth, ImageBitmap reports width, and both get drawn
+  // the same way.
+  function srcDims(img) { return { w: img.naturalWidth || img.width, h: img.naturalHeight || img.height }; }
+
+  // createImageBitmap decodes the file bytes directly, skipping the base64
+  // detour a data URL forces — a third less memory per image and no main-thread
+  // string work, which is what makes a folder of hundreds practical.
+  async function decodeSource(source, label) {
+    if (source instanceof Blob) {
+      if (window.createImageBitmap) {
+        try { return await createImageBitmap(source); } catch (e) { /* fall back below */ }
+      }
+      const url = URL.createObjectURL(source);
+      try {
+        const img = await loadImage(url, label);
+        img._revoke = url;
+        return img;
+      } catch (e) { URL.revokeObjectURL(url); throw e; }
+    }
+    return loadImage(source, label);
+  }
+
+  function releaseImage(img) {
+    if (!img) return;
+    if (typeof img.close === 'function') img.close();
+    if (img._revoke) { URL.revokeObjectURL(img._revoke); img._revoke = null; }
+  }
+
   // Draws src (a rect of img, in natural px) onto the export canvas.
-  function paintImage(img, src, tw, th, mode, bgMode, fillHex, flatten) {
+  function paintImage(img, src, tw, th, mode, bgMode, fillHex, flatten, target) {
     const w = src.w, h = src.h;
     let fw, fh, ox, oy, outW, outH;
     if (mode === 'cover') {
@@ -1233,7 +1370,9 @@
       ox = Math.floor((tw - fw) / 2); oy = Math.floor((th - fh) / 2);
     }
 
-    const canvas = $('canvas');
+    // The preview canvas is a single shared element, so a batch that renders
+    // more than one image at a time has to bring its own.
+    const canvas = target || $('canvas');
     canvas.width = outW; canvas.height = outH;
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, outW, outH);
@@ -1288,13 +1427,16 @@
     return name;
   }
 
-  async function renderOneImage(file, dataUrl, kind, taken) {
+  // source is the File itself on the batch paths and a data URL on the single
+  // path, which already holds one for the crop preview. name, when given, was
+  // reserved up front so a parallel run still produces stable output names.
+  async function renderOneImage(file, source, kind, taken, target, name) {
     const format = $('outputFormat').value;
 
     // Already the right type and nothing else is changing, so ship the bytes
     // we were given instead of decoding and re-encoding them.
     if (canPassThrough(file)) {
-      return { blob: file, fileName: outputName(file, format, 0, 0, taken), passed: true };
+      return { blob: file, fileName: name || outputName(file, format, 0, 0, taken), passed: true };
     }
 
     const tw = parseInt($('targetW').value);
@@ -1304,17 +1446,21 @@
     const bgMode = keepOriginal ? 'color' : $('bgMode').value;
     const quality = parseInt($('quality').value) / 100;
 
-    const img = await loadImage(dataUrl, file.name);
-    const src = { x:0, y:0, w:img.naturalWidth, h:img.naturalHeight };
-    if (!kind && !keepOriginal) kind = analyzeImage(img, src).kind;
-    const mode = effectiveFit(kind);
-
-    const out = paintImage(img, src, tw, th, mode, bgMode, $('hexInput').value, format === 'image/jpeg');
-    const blob = await canvasToBlob(out.canvas, format, quality);
+    const img = await decodeSource(source, file.name);
+    let out, blob;
+    try {
+      const src = Object.assign({ x:0, y:0 }, srcDims(img));
+      if (!kind && !keepOriginal) kind = analyzeImage(img, src).kind;
+      const mode = effectiveFit(kind);
+      out = paintImage(img, src, tw, th, mode, bgMode, $('hexInput').value, format === 'image/jpeg', target);
+      blob = await canvasToBlob(out.canvas, format, quality);
+    } finally {
+      releaseImage(img);
+    }
 
     return {
       blob,
-      fileName: outputName(file, format, out.outW, out.outH, taken),
+      fileName: name || outputName(file, format, out.outW, out.outH, taken),
       width: out.outW, height: out.outH,
     };
   }
@@ -1679,48 +1825,97 @@
     bulkQueue.forEach(item => { item.status = 'pending'; item.blob = null; item.resultFileName = null; });
     renderBulkQueue();
 
+    bulkRunning = true; bulkCancel = false;
+    $('bulkStopBtn').style.display = '';
+    $('bulkStopBtn').disabled = false;
+
+    const format = $('outputFormat').value;
+    const total = bulkQueue.length;
     const taken = new Set();
-    let doneCount = 0, passedCount = 0;
-    for (let idx = 0; idx < bulkQueue.length; idx++) {
-      const item = bulkQueue[idx];
-      item.status = 'active';
-      renderBulkQueue();
-      overallLabel.textContent = item.file.name + '  (' + (idx + 1) + ' of ' + bulkQueue.length + ')';
-      const pct = Math.round((idx / bulkQueue.length) * 100);
+
+    // A converted name is just the original stem plus the new extension, so the
+    // whole set can be handed out up front. That keeps output names — and the
+    // de-duplicating suffixes — identical no matter what order the lanes finish.
+    if (keepOriginal) bulkQueue.forEach(item => { item.plannedName = outputName(item.file, format, 0, 0, taken); });
+
+    // Encoding one image at a time leaves most of the machine idle. Resizing
+    // stays single-lane because its names depend on dimensions it has not
+    // computed yet, and because it draws on the shared preview canvas.
+    const lanes = keepOriginal
+      ? Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 1))
+      : 1;
+
+    const slots = new Array(total);
+    let nextIdx = 0, doneCount = 0, passedCount = 0, finished = 0;
+
+    function paintProgress(name) {
+      const pct = Math.round((finished / total) * 100);
       overallBar.style.width = pct + '%';
       overallPct.textContent = pct + '%';
-
-      const rowEl = $('qitem-' + idx);
-      if (rowEl) rowEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-
-      try {
-        // A pass-through never needs the pixels, so skip the decode entirely.
-        if (!item.dataUrl && !canPassThrough(item.file)) item.dataUrl = await readFileAsDataUrl(item.file);
-        const { blob, fileName, passed } = await renderOneImage(item.file, item.dataUrl, item.kind, taken);
-        item.blob = blob;
-        item.resultFileName = fileName;
-        item.status = passed ? 'kept' : 'done';
-        bulkResults.push({ blob, fileName });
-        if (passed) passedCount++; else doneCount++;
-      } catch (err) {
-        item.status = 'error';
-        item.errorMsg = err.message;
-        console.error('Error processing ' + item.file.name + ':', err);
-      }
-      renderBulkQueue();
-      await tick();
+      overallLabel.textContent = name
+        ? name + '  (' + finished + ' of ' + total + ')'
+        : finished + ' of ' + total;
     }
 
-    overallBar.style.width = '100%';
-    overallPct.textContent = '100%';
-    overallBar.classList.add('done');
-    overallLabel.textContent = (doneCount + passedCount) + ' of ' + bulkQueue.length + ' finished';
+    async function runLane(canvas) {
+      while (!bulkCancel) {
+        const idx = nextIdx++;
+        if (idx >= total) return;
+        const item = bulkQueue[idx];
+        item.status = 'active';
+        updateQueueRow(idx);
+        try {
+          const { blob, fileName, passed } = await renderOneImage(
+            item.file, item.file, item.kind, keepOriginal ? null : taken, canvas, item.plannedName
+          );
+          item.blob = blob;
+          item.resultFileName = fileName;
+          item.status = passed ? 'kept' : 'done';
+          slots[idx] = { blob, fileName };
+          if (passed) passedCount++; else doneCount++;
+        } catch (err) {
+          item.status = 'error';
+          item.errorMsg = err.message;
+          console.error('Error processing ' + item.file.name + ':', err);
+        }
+        finished++;
+        updateQueueRow(idx);
+        paintProgress(item.file.name);
+        // Hand the main thread back often enough to stay responsive and to keep
+        // the Stop button live, without paying a fixed delay per image.
+        if (finished % lanes === 0) await yieldUi();
+      }
+    }
+
+    const canvases = [];
+    for (let i = 0; i < lanes; i++) canvases.push(i === 0 && lanes === 1 ? null : document.createElement('canvas'));
+    await Promise.all(canvases.map(runLane));
+    // Scratch canvases can hold tens of megabytes of backing store between runs.
+    canvases.forEach(c => { if (c) { c.width = c.height = 0; } });
+
+    // Written by index, then compacted, so the ZIP follows the queue order even
+    // though the lanes finished out of order.
+    bulkResults = slots.filter(Boolean);
+
+    bulkRunning = false;
+    $('bulkStopBtn').style.display = 'none';
+
+    const attempted = doneCount + passedCount;
+    overallBar.style.width = bulkCancel ? Math.round((finished / total) * 100) + '%' : '100%';
+    overallPct.textContent = bulkCancel ? Math.round((finished / total) * 100) + '%' : '100%';
+    if (!bulkCancel) overallBar.classList.add('done');
+    overallLabel.textContent = bulkCancel
+      ? 'stopped after ' + finished + ' of ' + total
+      : attempted + ' of ' + total + ' finished';
 
     syncDimValidity();
     if (bulkResults.length > 0) $('bulkDownloadBtn').disabled = false;
-    const errors = bulkQueue.length - doneCount - passedCount;
+    const errors = finished - doneCount - passedCount;
     const verb = keepOriginal ? 'converted' : 'resized';
-    if (errors > 0) {
+    if (bulkCancel) {
+      showStatus('Stopped after ' + finished + ' of ' + total + '. The ' + bulkResults.length +
+        ' already finished are ready to download.', 'warn');
+    } else if (errors > 0) {
       showStatus(doneCount + ' ' + verb + ', ' + errors + ' failed. The browser console has the details for the failures.', 'error');
     } else if (keepOriginal) {
       const before = bulkQueue.reduce((n, i) => n + i.file.size, 0);
