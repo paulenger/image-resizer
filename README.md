@@ -32,6 +32,20 @@ The **Conversion** tab drops the output size entirely. The canvas becomes each i
 
 It reuses the batch queue, so converting a single file is just a queue of one.
 
+### Getting a lot of files in
+
+Three ways in, all of them plural:
+
+- **Drop a folder.** Every image inside it is picked up, subfolders included. A dropped directory arrives in `dataTransfer.files` as one typeless entry, so the drop handler walks `dataTransfer.items` with `webkitGetAsEntry` instead and recurses. `.DS_Store`, `Thumbs.db` and other dotfiles are ignored silently rather than reported as rejected input.
+- **Choose a folder** with the picker under the drop zone (`webkitdirectory`).
+- **Select or drop any number of files**, from anywhere.
+
+A folder arrives in filesystem order, which would scramble the queue and the ZIP, so folder input is sorted naturally — `shot-2` before `shot-10`. Duplicates are skipped by name and size.
+
+Converting runs several images at once, one scratch canvas per lane, and decodes straight from the `File` with `createImageBitmap` rather than routing each image through a base64 data URL. Output names are reserved before the run and results are written by index, so parallel lanes still emit the queue's order. For reference, on this machine 300 images take about 4 seconds and 1000 take about 10.
+
+Long runs have a **Stop** button; whatever already finished stays downloadable. The queue list caps its visible rows so a thousand-file drop stays readable, while every file is still queued and included in the ZIP.
+
 Behaviour worth knowing:
 
 - **Files already in the target type are passed through untouched** (toggle under the file type). Re-encoding a JPEG as a JPEG only throws away quality, so those files are copied into the ZIP as they arrived, without being decoded at all.
