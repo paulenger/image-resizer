@@ -348,8 +348,8 @@
   <header class="head">
     <div>
       <p class="eyebrow">Image utility</p>
-      <h1>Resize &amp; pad</h1>
-      <p class="sub">Each image is scaled to fit inside your output size, then centered with padding. Nothing is cropped or stretched.</p>
+      <h1 id="h1">Resize &amp; pad</h1>
+      <p class="sub" id="headerSub">Each image is scaled to fit inside your output size, then centered with padding. Nothing is cropped or stretched.</p>
     </div>
     <div class="spec"><b id="specDims">1080 × 1080</b><span id="specFormat">PNG</span></div>
   </header>
@@ -357,6 +357,7 @@
   <div class="modes">
     <button class="mode-btn active" id="modeSingle" onclick="setMode('single')">One image</button>
     <button class="mode-btn" id="modeBulk" onclick="setMode('bulk')">Batch</button>
+    <button class="mode-btn" id="modeConvert" onclick="setMode('convert')">Conversion</button>
   </div>
 
   <!-- ── SINGLE ── -->
@@ -405,8 +406,8 @@
       <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
       </svg>
-      <p class="drop-title">Choose images or drop them here</p>
-      <p class="drop-hint">Select as many as you like — they all use the same settings</p>
+      <p class="drop-title" id="bulkDropTitle">Choose images or drop them here</p>
+      <p class="drop-hint" id="bulkDropHint">Select as many as you like — they all use the same settings</p>
     </div>
 
     <div class="queue" id="bulkQueue">
@@ -427,9 +428,11 @@
   </div>
 
   <!-- ── DIMENSIONS ── -->
+  <!-- Hidden wholesale on the Conversion tab, where there is no output size. -->
+  <div id="sizeSection">
   <div class="sec"><span class="sec-num">02</span><h2>Output size</h2><span class="sec-rule"></span></div>
   <div class="presets">
-    <button class="preset" onclick="applyPreset(1080,1080,this)"><b>1080 × 1080</b><small>Instagram</small></button>
+    <button class="preset active" onclick="applyPreset(1080,1080,this)"><b>1080 × 1080</b><small>Instagram</small></button>
     <button class="preset" onclick="applyPreset(1080,1920,this)"><b>1080 × 1920</b><small>Story / Reel</small></button>
     <button class="preset" onclick="applyPreset(1200,628,this)"><b>1200 × 628</b><small>OG / LinkedIn</small></button>
     <button class="preset" onclick="applyPreset(1500,500,this)"><b>1500 × 500</b><small>X header</small></button>
@@ -438,7 +441,7 @@
     <button class="preset" onclick="applyPreset(3840,3840,this)"><b>3840 × 3840</b><small>Max square</small></button>
   </div>
 
-  <div class="dims">
+  <div class="dims" id="dimsWrap">
     <div class="field">
       <label for="targetW">Width</label>
       <input type="number" id="targetW" value="1080" min="1" max="8000" oninput="onDimInput('w')" />
@@ -449,13 +452,13 @@
       <input type="number" id="targetH" value="1080" min="1" max="8000" oninput="onDimInput('h')" />
     </div>
   </div>
-  <label class="lock">
+  <label class="lock" id="lockSquareWrap">
     <input type="checkbox" id="lockSquare" onchange="onLockChange()" />
     Keep it square
   </label>
   <p class="dim-error" id="dimError"></p>
 
-  <div class="fitmode-row">
+  <div class="fitmode-row" id="fitModeRow">
     <span class="lbl">When the image doesn't match that shape</span>
     <div class="fitmode" id="fitModeCtl">
       <button class="active" data-mode="auto" onclick="setFitMode('auto')">Decide per image</button>
@@ -470,10 +473,26 @@
     <div class="fit-frame" id="fitFrame"><div class="fit-inner" id="fitInner"></div></div>
     <div class="fit-read" id="fitRead"></div>
   </div>
+  </div><!-- /sizeSection -->
 
-  <!-- ── BACKGROUND & FORMAT ── -->
-  <div class="sec"><span class="sec-num">03</span><h2>Padding and file type</h2><span class="sec-rule"></span></div>
+  <!-- ── FORMAT & BACKGROUND ── -->
+  <div class="sec"><span class="sec-num" id="secFormatNum">03</span><h2 id="secFormatTitle">File type and padding</h2><span class="sec-rule"></span></div>
   <div class="grid2">
+    <div>
+      <span class="lbl">Save as</span>
+      <select id="outputFormat" onchange="onFormatChange()">
+        <option value="image/png">PNG</option>
+        <option value="image/jpeg">JPEG</option>
+        <option value="image/webp">WebP</option>
+        <option value="image/avif">AVIF</option>
+      </select>
+      <p class="help" id="formatHelp"></p>
+    </div>
+    <div id="qualityWrap">
+      <label for="quality">Quality</label>
+      <input type="number" id="quality" value="95" min="1" max="100" onchange="updateSpec()" />
+      <p class="help" id="qualityHelp">Applies to JPEG, WebP and AVIF</p>
+    </div>
     <div id="bgModeWrap">
       <span class="lbl">Fill the padding with</span>
       <select id="bgMode" onchange="onBgModeChange()">
@@ -484,32 +503,25 @@
       <p class="help" id="bgHelp" style="display:none"></p>
     </div>
     <div id="colorPickerWrap">
-      <span class="lbl">Fill color</span>
+      <span class="lbl" id="colorLabel">Fill color</span>
       <div class="color-row">
         <input type="color" id="colorPicker" value="#ffffff" oninput="syncHex()" />
         <input type="text" id="hexInput" value="#ffffff" maxlength="7" oninput="syncColor()" placeholder="#ffffff" />
       </div>
     </div>
-    <div>
-      <span class="lbl">Save as</span>
-      <select id="outputFormat" onchange="onFormatChange()">
-        <option value="image/png">PNG</option>
-        <option value="image/jpeg">JPEG</option>
-        <option value="image/webp">WebP</option>
-      </select>
-    </div>
-    <div id="qualityWrap">
-      <label for="quality">Quality</label>
-      <input type="number" id="quality" value="95" min="1" max="100" onchange="updateSpec()" />
-      <p class="help" id="qualityHelp">Applies to JPEG and WebP</p>
-    </div>
   </div>
+
+  <label class="lock" id="skipSameWrap">
+    <input type="checkbox" id="skipSame" checked onchange="onFormatChange()" />
+    Leave files that are already that type untouched
+  </label>
+  <p class="help" id="convertSummary" style="display:none"></p>
 
   <!-- ── ACTIONS ── -->
   <div id="singleActions" class="actions">
     <button class="btn btn-primary" id="processBtn" onclick="processImage()" disabled>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 15l5-5 4 4 3-3 6 6"/></svg>
-      Resize image
+      <span id="processBtnLabel">Resize image</span>
     </button>
     <button class="btn btn-ghost" id="downloadBtn" onclick="downloadResult()" disabled>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -520,7 +532,7 @@
   <div id="bulkActions" class="actions" style="display:none">
     <button class="btn btn-primary" id="bulkProcessBtn" onclick="processBulk()" disabled>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 15l5-5 4 4 3-3 6 6"/></svg>
-      Resize all
+      <span id="bulkProcessBtnLabel">Resize all</span>
     </button>
     <button class="btn btn-ghost" id="bulkDownloadBtn" onclick="downloadBulkZip()" disabled>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -540,7 +552,7 @@
   <canvas id="canvas"></canvas>
 
   <div id="previewSection" style="display:none">
-    <div class="sec"><span class="sec-num">04</span><h2>Result</h2><span class="sec-rule"></span></div>
+    <div class="sec"><span class="sec-num" id="secResultNum">04</span><h2>Result</h2><span class="sec-rule"></span></div>
     <div class="previews">
       <div><p class="pv-label" id="origLabel">Original</p><img id="previewOriginal" alt="Original image" /></div>
       <div><p class="pv-label" id="resultLabel">Resized</p><img id="previewSquared" alt="Resized image" /></div>
@@ -560,15 +572,51 @@
   let currentFile = null;
   let cachedDataUrl = null;
   let originalWidth = 0, originalHeight = 0;
-  let resultDataUrl = null, resultFileName = null;
+  let resultBlob = null, resultUrl = null, resultFileName = null;
   let singleReady = false;
   // Bulk
-  let bulkQueue = []; // { file, dataUrl, status, resultDataUrl, resultFileName }
+  let bulkQueue = []; // { file, dataUrl, status, kind, blob, resultFileName }
   let bulkResults = [];
 
   // Fit handling
   let fitMode = 'auto';           // 'auto' | 'pad' | 'cover'
   let detectedKind = null;        // single-image analysis result
+
+  // True on the Conversion tab, where the canvas becomes each image's own size.
+  // Width, height, fit mode, padding and cropping all stop applying, so the
+  // only thing that changes is the file type: 200 mixed images in, 200 of the
+  // same type out, pixels untouched.
+  let keepOriginal = false;
+
+  const FORMATS = {
+    'image/png':  { label:'PNG',  ext:'png',  lossy:false, alpha:true  },
+    'image/jpeg': { label:'JPEG', ext:'jpg',  lossy:true,  alpha:false },
+    'image/webp': { label:'WebP', ext:'webp', lossy:true,  alpha:true  },
+    'image/avif': { label:'AVIF', ext:'avif', lossy:true,  alpha:true  },
+  };
+  function fmt(mime) { return FORMATS[mime] || FORMATS['image/png']; }
+
+  // What the file is now, for the "PNG → JPEG" label on each queue row.
+  function sourceType(file) {
+    const m = FORMATS[(file.type || '').toLowerCase()];
+    if (m) return m.label;
+    if (/\.jpe?g$/i.test(file.name)) return 'JPEG';
+    if (/^image\/(\w+)/.test(file.type || '')) return RegExp.$1.toUpperCase();
+    return (file.name.split('.').pop() || 'image').toUpperCase();
+  }
+
+  function bytes(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
+    return (n / 1024 / 1024).toFixed(2) + ' MB';
+  }
+
+  function sizeShift(before, after) {
+    if (!before || !after) return bytes(after || 0);
+    const pct = Math.round((1 - after / before) * 100);
+    return bytes(before) + ' → ' + bytes(after) +
+      (pct > 0 ? ' (' + pct + '% smaller)' : pct < 0 ? ' (' + Math.abs(pct) + '% larger)' : '');
+  }
 
   const $ = id => document.getElementById(id);
   function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -624,6 +672,7 @@
 
   const MAX_DIM = 8000;
   function dimsValid() {
+    if (keepOriginal) return { ok:true, tw:0, th:0, original:true };
     const tw = parseInt($('targetW').value), th = parseInt($('targetH').value);
     if (!tw || !th || tw < 1 || th < 1) return { ok:false, msg:'Enter a width and height of at least 1 px.' };
     if (tw > MAX_DIM || th > MAX_DIM) return { ok:false, msg:MAX_DIM + ' px is the largest dimension this tool handles. ' +
@@ -645,6 +694,7 @@
   }
 
   function effectiveFit(kind) {
+    if (keepOriginal)         return 'none';
     if (fitMode === 'pad')    return 'pad';
     if (fitMode === 'cover')  return 'cover';
     if (fitMode === 'shrink') return 'shrink';
@@ -652,6 +702,13 @@
   }
 
   function queueSplit() {
+    if (keepOriginal) {
+      const target = $('outputFormat').value;
+      const same = bulkQueue.filter(i => isSameFormat(i.file, target)).length;
+      const parts = [(bulkQueue.length - same) + ' converted to ' + fmt(target).label];
+      if (same) parts.push(same + ' already ' + fmt(target).label);
+      return parts.join(', ');
+    }
     const plan = { pad:0, cover:0, shrink:0 };
     bulkQueue.forEach(i => plan[effectiveFit(i.kind || 'product')]++);
     const parts = [];
@@ -659,6 +716,20 @@
     if (plan.cover)  parts.push(plan.cover + ' filled');
     if (plan.shrink) parts.push(plan.shrink + ' left unpadded');
     return parts.join(', ');
+  }
+
+  // A file already in the target type only needs re-encoding if we are also
+  // changing its pixels. Re-encoding a JPEG as a JPEG throws away quality for
+  // nothing, so in convert-only runs those files are passed through as they are.
+  function isSameFormat(file, mime) {
+    const type = (file.type || '').toLowerCase();
+    if (type === mime) return true;
+    if (mime === 'image/jpeg') return type === 'image/jpg' || /\.jpe?g$/i.test(file.name);
+    return new RegExp('\\.' + fmt(mime).ext + '$', 'i').test(file.name);
+  }
+
+  function canPassThrough(file) {
+    return keepOriginal && $('skipSame').checked && isSameFormat(file, $('outputFormat').value);
   }
 
   function setFitMode(mode) {
@@ -683,18 +754,40 @@
   }
 
   // ── Mode switch ────────────────────────────────────────────────────────────
+  // Conversion reuses the batch queue and actions: converting one file is just
+  // a queue of one, so there is no separate single-file path to keep in step.
   function setMode(mode) {
     currentMode = mode;
+    keepOriginal = (mode === 'convert');
+    const queued = (mode === 'bulk' || mode === 'convert');
+
     $('modeSingle').classList.toggle('active', mode === 'single');
     $('modeBulk').classList.toggle('active', mode === 'bulk');
+    $('modeConvert').classList.toggle('active', mode === 'convert');
+
     $('singleSection').style.display = mode === 'single' ? '' : 'none';
-    $('bulkSection').style.display   = mode === 'bulk'   ? '' : 'none';
+    $('bulkSection').style.display   = queued ? '' : 'none';
     $('singleActions').style.display = mode === 'single' ? '' : 'none';
-    $('bulkActions').style.display   = mode === 'bulk'   ? '' : 'none';
+    $('bulkActions').style.display   = queued ? '' : 'none';
+    $('sizeSection').style.display   = keepOriginal ? 'none' : '';
+
+    // Without an output size there is no section 02, so the rest move up.
+    $('secFormatNum').textContent = keepOriginal ? '02' : '03';
+    $('secResultNum').textContent = keepOriginal ? '03' : '04';
+    $('secFormatTitle').textContent = keepOriginal ? 'File type' : 'File type and padding';
+
+    $('bulkDropTitle').textContent = keepOriginal
+      ? 'Choose images to convert or drop them here'
+      : 'Choose images or drop them here';
+    $('bulkDropHint').textContent = keepOriginal
+      ? 'Mixed types are fine — they all come back as the type you pick'
+      : 'Select as many as you like — they all use the same settings';
+
     $('previewSection').style.display = 'none';
     hideProgress();
     clearStatus();
-    updateFitInfo();
+    syncModeControls();
+    onFormatChange();
   }
 
   // ── Progress ───────────────────────────────────────────────────────────────
@@ -766,7 +859,7 @@
     if (!file || !file.type.startsWith('image/')) {
       showStatus('That file is not an image. Pick a PNG, JPEG, WebP, or GIF.', 'error'); return;
     }
-    currentFile = file; cachedDataUrl = null; resultDataUrl = null; detectedKind = null;
+    currentFile = file; cachedDataUrl = null; resultBlob = null; detectedKind = null;
     cropRect = null; cropPreviewUrl = null; singleReady = false;
     hideCropPanel();
     $('processBtn').disabled = true;
@@ -824,13 +917,15 @@
     arr.forEach(file => {
       const exists = bulkQueue.some(q => q.file.name === file.name && q.file.size === file.size);
       if (exists) { dupes.push(file); return; }
-      const item = { file, dataUrl: null, status: 'pending', kind: null, resultDataUrl: null, resultFileName: null };
+      const item = { file, dataUrl: null, status: 'pending', kind: null, blob: null, resultFileName: null };
       bulkQueue.push(item); added.push(item);
     });
     renderBulkQueue();
     syncDimValidity();
 
-    if (added.length) {
+    // The backdrop check only exists to choose pad vs fill. A convert-only run
+    // makes that choice moot, so skip decoding every file twice.
+    if (added.length && !keepOriginal) {
       showStatus('Checking ' + added.length + ' image' + (added.length !== 1 ? 's' : '') + '.', 'info');
       for (const item of added) {
         try {
@@ -854,8 +949,10 @@
       (skipped.length !== 1 ? 's' : '') + ': ' + esc(fileList(skipped)) + '.';
     if (dupes.length) note += ' ' + dupes.length + ' already in the queue: ' + esc(fileList(dupes)) + '.';
 
+    updateFitInfo();
     showStatus(bulkQueue.length + ' image' + (bulkQueue.length !== 1 ? 's' : '') + ' queued — ' +
-      queueSplit() + '. Set your output size, then resize all.' + note,
+      queueSplit() + '. ' +
+      (keepOriginal ? 'Pick the file type, then convert all.' : 'Set your output size, then resize all.') + note,
       skipped.length ? 'warn' : 'info');
   }
 
@@ -869,13 +966,20 @@
     bulkQueue.forEach((item, idx) => {
       const row = document.createElement('div');
       row.className = 'qitem'; row.id = 'qitem-' + idx;
-      const labels = { pending:'Waiting', active:'Working', done:'Done', error:'Failed' };
+      const labels = { pending:'Waiting', active:'Working', done:'Done', kept:'Kept', error:'Failed' };
       const fitOf = m => m === 'cover' ? 'Fill' : m === 'shrink' ? 'No pad' : 'Pad';
-      const treat = item.kind ? fitOf(effectiveFit(item.kind)) : '·';
+      // In a convert-only run the interesting fact is the type change, not the fit.
+      const treat = keepOriginal
+        ? sourceType(item.file) + ' → ' + fmt($('outputFormat').value).label
+        : (item.kind ? fitOf(effectiveFit(item.kind)) : '·');
+      const size = item.blob
+        ? bytes(item.file.size) + ' → ' + bytes(item.blob.size)
+        : bytes(item.file.size);
       row.innerHTML =
-        '<span class="qitem-name" title="' + esc(item.file.name) + '">' + esc(item.file.name) + '</span>' +
-        '<span class="qitem-size">' + (item.file.size/1024/1024).toFixed(2) + ' MB</span>' +
-        '<span class="pill">' + treat + '</span>' +
+        '<span class="qitem-name" title="' + esc(item.resultFileName || item.file.name) + '">' +
+          esc(item.resultFileName || item.file.name) + '</span>' +
+        '<span class="qitem-size">' + size + '</span>' +
+        '<span class="pill">' + esc(treat) + '</span>' +
         '<span class="pill ' + item.status + '">' + labels[item.status] + '</span>' +
         (item.status === 'pending'
           ? '<button class="qitem-x" onclick="removeFromQueue(' + idx + ')" title="Remove" aria-label="Remove">×</button>'
@@ -1114,6 +1218,10 @@
       fw = Math.round(w * scale); fh = Math.round(h * scale);
       outW = tw; outH = th;
       ox = Math.round((tw - fw) / 2); oy = Math.round((th - fh) / 2);
+    } else if (mode === 'none') {
+      // Convert-only: the canvas is the source, so there is nothing to scale.
+      fw = outW = w; fh = outH = h;
+      ox = 0; oy = 0;
     } else if (mode === 'shrink') {
       const scale = Math.min(tw / w, th / h);
       fw = outW = Math.round(w * scale); fh = outH = Math.round(h * scale);
@@ -1153,25 +1261,62 @@
     return { canvas, outW, outH, fw, fh };
   }
 
-  async function renderOneImage(file, dataUrl, kind) {
+  // Blobs rather than data URLs: a base64 string is a third larger than the
+  // bytes it encodes, and a batch of a few hundred images holds every one of
+  // them in memory at once until the ZIP is built.
+  function canvasToBlob(canvas, mime, quality) {
+    return new Promise((resolve, reject) => {
+      canvas.toBlob(
+        b => b ? resolve(b) : reject(new Error('The browser could not encode this image as ' + fmt(mime).label)),
+        mime, quality
+      );
+    });
+  }
+
+  // Converting collapses every input extension onto one, so photo.png and
+  // photo.jpg both want to be photo.jpg. Track the names already handed out so
+  // the second one does not silently overwrite the first inside the ZIP.
+  function outputName(file, mime, outW, outH, taken) {
+    const base = file.name.replace(/\.[^.]+$/, '') || 'image';
+    const stem = keepOriginal ? base : base + '_' + outW + 'x' + outH;
+    let name = stem + '.' + fmt(mime).ext, n = 2;
+    while (taken && taken.has(name.toLowerCase())) {
+      name = stem + '-' + n + '.' + fmt(mime).ext;
+      n++;
+    }
+    if (taken) taken.add(name.toLowerCase());
+    return name;
+  }
+
+  async function renderOneImage(file, dataUrl, kind, taken) {
+    const format = $('outputFormat').value;
+
+    // Already the right type and nothing else is changing, so ship the bytes
+    // we were given instead of decoding and re-encoding them.
+    if (canPassThrough(file)) {
+      return { blob: file, fileName: outputName(file, format, 0, 0, taken), passed: true };
+    }
+
     const tw = parseInt($('targetW').value);
     const th = parseInt($('targetH').value);
-    const bgMode = $('bgMode').value;
-    const format = $('outputFormat').value;
+    // No padding happens in a convert-only run, but JPEG still needs somewhere
+    // to put transparent pixels, and that is the color control we left visible.
+    const bgMode = keepOriginal ? 'color' : $('bgMode').value;
     const quality = parseInt($('quality').value) / 100;
 
     const img = await loadImage(dataUrl, file.name);
     const src = { x:0, y:0, w:img.naturalWidth, h:img.naturalHeight };
-    if (!kind) kind = analyzeImage(img, src).kind;
+    if (!kind && !keepOriginal) kind = analyzeImage(img, src).kind;
     const mode = effectiveFit(kind);
 
     const out = paintImage(img, src, tw, th, mode, bgMode, $('hexInput').value, format === 'image/jpeg');
+    const blob = await canvasToBlob(out.canvas, format, quality);
 
-    const activeFormat = format;
-    const ext = activeFormat === 'image/jpeg' ? 'jpg' : activeFormat === 'image/webp' ? 'webp' : 'png';
-    const base = file.name.replace(/\.[^.]+$/, '');
-    const fileName = base + '_' + out.outW + 'x' + out.outH + '.' + ext;
-    return { dataUrl: out.canvas.toDataURL(activeFormat, quality), fileName };
+    return {
+      blob,
+      fileName: outputName(file, format, out.outW, out.outH, taken),
+      width: out.outW, height: out.outH,
+    };
   }
 
   // ── Presets & dimensions ───────────────────────────────────────────────────
@@ -1184,6 +1329,19 @@
     refitCropToOutput();
     updateFitInfo();
   }
+
+  // Everything that reads differently once the output size is out of the picture.
+  function syncModeControls() {
+    $('skipSameWrap').style.display = keepOriginal ? '' : 'none';
+    $('convertSummary').style.display = keepOriginal ? '' : 'none';
+    $('bulkProcessBtnLabel').textContent = keepOriginal ? 'Convert all' : 'Resize all';
+    $('h1').textContent = keepOriginal ? 'Convert' : 'Resize & pad';
+    $('headerSub').textContent = keepOriginal
+      ? 'Every image keeps its own pixel size. Only the file type changes, so nothing is scaled, padded or cropped.'
+      : 'Each image is scaled to fit inside your output size, then centered with padding. Nothing is cropped or stretched.';
+    renderBulkQueue();
+  }
+
   function onDimInput(changed) {
     document.querySelectorAll('.preset').forEach(b => b.classList.remove('active'));
     refitCropToOutput();
@@ -1209,6 +1367,17 @@
     const tw = parseInt($('targetW').value) || 0;
     const th = parseInt($('targetH').value) || 0;
     const frame = $('fitFrame'), inner = $('fitInner'), read = $('fitRead');
+
+    // The Conversion tab hides the whole output-size section, diagram included,
+    // so the plan is reported as a line under the file type instead.
+    if (keepOriginal) {
+      syncDimValidity();
+      $('convertSummary').textContent = bulkQueue.length
+        ? queueSplit() + ', at their original pixel sizes.'
+        : 'Every image keeps its own pixel size. Only the file type changes.';
+      return;
+    }
+
     const valid = syncDimValidity();
     if (!valid.ok) {
       frame.classList.remove('cropping', 'clear');
@@ -1309,11 +1478,20 @@
     const v = dimsValid();
     const tw = v.ok ? v.tw : 0, th = v.ok ? v.th : 0;
     const bgMode = $('bgMode').value;
-    const padding = (fitMode === 'pad') || (fitMode === 'auto' && !(currentMode === 'single' && detectedKind && detectedKind.kind === 'lifestyle'));
-    const fmt = $('outputFormat').value;
-    const name = fmt === 'image/jpeg' ? 'JPEG' : fmt === 'image/webp' ? 'WebP' : 'PNG';
-    const lossy = (fmt === 'image/jpeg' || fmt === 'image/webp');
-    const clear = padding && bgMode === 'transparent' && fmt !== 'image/jpeg';
+    const padding = !keepOriginal &&
+      ((fitMode === 'pad') || (fitMode === 'auto' && !(currentMode === 'single' && detectedKind && detectedKind.kind === 'lifestyle')));
+    const mime = $('outputFormat').value;
+    const name = fmt(mime).label;
+    const lossy = fmt(mime).lossy;
+    const clear = padding && bgMode === 'transparent' && fmt(mime).alpha;
+
+    if (keepOriginal) {
+      $('specDims').textContent = (currentMode === 'single' && originalWidth)
+        ? originalWidth + ' × ' + originalHeight
+        : 'Original';
+      $('specFormat').textContent = name + (lossy ? ' · Q' + ($('quality').value || 95) : '');
+      return;
+    }
 
     let dims = (tw && th) ? tw + ' × ' + th : '—';
     if (fitMode === 'shrink' && tw && th) {
@@ -1339,6 +1517,22 @@
   }
   function syncPadControls() {
     const single = currentMode === 'single';
+    const jpeg = $('outputFormat').value === 'image/jpeg';
+
+    // Nothing is ever padded on the Conversion tab, so the padding controls go
+    // away entirely. The color still matters for JPEG, which has no alpha and
+    // has to put transparent pixels somewhere, so it stays under a new label.
+    if (keepOriginal) {
+      $('bgModeWrap').style.display = 'none';
+      $('colorPickerWrap').style.display = jpeg ? '' : 'none';
+      $('colorPickerWrap').classList.remove('dimmed');
+      $('colorLabel').textContent = 'Flatten transparency onto';
+      return;
+    }
+
+    $('bgModeWrap').style.display = '';
+    $('colorPickerWrap').style.display = '';
+    $('colorLabel').textContent = 'Fill color';
     const filling = fitMode === 'cover' || fitMode === 'shrink' ||
       (fitMode === 'auto' && single && detectedKind && detectedKind.kind === 'lifestyle');
     $('bgModeWrap').classList.toggle('dimmed', filling);
@@ -1349,9 +1543,9 @@
     onFormatChange();
   }
   function onFormatChange() {
-    const fmt = $('outputFormat').value;
-    const jpeg = fmt === 'image/jpeg';
-    const lossy = jpeg || fmt === 'image/webp';
+    const mime = $('outputFormat').value;
+    const jpeg = mime === 'image/jpeg';
+    const lossy = fmt(mime).lossy;
 
     // JPEG has no alpha channel, so transparent padding is not a real choice.
     const clearOpt = $('bgMode').querySelector('option[value="transparent"]');
@@ -1364,21 +1558,54 @@
       ? (switched ? 'JPEG has no transparency, so the padding switched to a solid color.'
                   : 'JPEG has no transparency. Any see-through areas are flattened onto the fill color.')
       : '';
-    $('bgHelp').style.display = jpeg ? 'block' : 'none';
+    $('bgHelp').style.display = (jpeg && !keepOriginal) ? 'block' : 'none';
+
+    $('formatHelp').textContent = jpeg
+      ? (keepOriginal ? 'JPEG has no transparency, so see-through areas take the flatten color below. GIFs become a still frame.'
+                      : 'Transparency is flattened onto the fill color. GIFs become a still frame.')
+      : 'Transparency is kept. GIFs become a still frame.';
 
     $('qualityWrap').classList.toggle('dimmed', !lossy);
     $('qualityHelp').textContent = lossy ? 'Higher means a larger file' : 'PNG is lossless, so quality does not apply';
+    $('skipSame').parentElement.lastChild.textContent =
+      ' Leave files that are already ' + fmt(mime).label + ' untouched';
     syncPadControls();
-    updateSpec();
+    renderBulkQueue();
+    updateFitInfo();
+  }
+
+  // canvas.toBlob quietly falls back to PNG for a type it cannot encode, which
+  // would hand back PNG bytes inside a .avif or .webp file. Ask each encoder
+  // for a real pixel up front and retire the ones that answer with something
+  // else, so the extension always matches the contents.
+  async function probeEncoders() {
+    const c = document.createElement('canvas');
+    c.width = c.height = 2;
+    const x = c.getContext('2d');
+    x.fillStyle = '#808080'; x.fillRect(0, 0, 2, 2);
+
+    for (const mime of Object.keys(FORMATS)) {
+      if (mime === 'image/png') continue;   // always available
+      const ok = await new Promise(res => {
+        try { c.toBlob(b => res(!!b && b.type === mime), mime, 0.8); }
+        catch (e) { res(false); }
+      });
+      if (ok) continue;
+      const opt = $('outputFormat').querySelector('option[value="' + mime + '"]');
+      if (!opt) continue;
+      opt.disabled = true;
+      opt.textContent = fmt(mime).label + ' — not in this browser';
+      if ($('outputFormat').value === mime) $('outputFormat').value = 'image/png';
+    }
+    onFormatChange();
   }
 
   // ── Single: process ────────────────────────────────────────────────────────
   async function processImage() {
     if (!currentFile || !cachedDataUrl) { showStatus('Upload an image first.', 'error'); return; }
-    const tw = parseInt($('targetW').value);
-    const th = parseInt($('targetH').value);
-    if (!tw || !th || tw < 1 || th < 1) { showStatus('Enter a width and height of at least 1 px.', 'error'); return; }
-    if (tw > 8000 || th > 8000) { showStatus('8000 px is the largest dimension this tool handles.', 'error'); return; }
+    const sizes = dimsValid();
+    if (!sizes.ok) { showStatus(sizes.msg, 'error'); return; }
+    const tw = sizes.tw, th = sizes.th;
 
     $('processBtn').disabled = true;
     $('downloadBtn').disabled = true;
@@ -1405,14 +1632,20 @@
     const out = paintImage(img, src, tw, th, mode, bgMode, $('hexInput').value, format === 'image/jpeg');
 
     setProgress('export', 84, 'Exporting'); await tick();
-    const activeFormat = format;
-    const ext = activeFormat === 'image/jpeg' ? 'jpg' : activeFormat === 'image/webp' ? 'webp' : 'png';
-    const base = currentFile.name.replace(/\.[^.]+$/, '');
-    resultFileName = base + '_' + out.outW + 'x' + out.outH + '.' + ext;
-    resultDataUrl = out.canvas.toDataURL(activeFormat, quality);
+    resultFileName = outputName(currentFile, format, out.outW, out.outH, null);
+    if (resultUrl) URL.revokeObjectURL(resultUrl);
+    try {
+      resultBlob = await canvasToBlob(out.canvas, format, quality);
+    } catch (err) {
+      hideProgress();
+      showStatus(err.message, 'error');
+      $('processBtn').disabled = false;
+      return;
+    }
+    resultUrl = URL.createObjectURL(resultBlob);
 
     setProgress('done', 100, 'Finished'); await tick();
-    $('previewSquared').src = resultDataUrl;
+    $('previewSquared').src = resultUrl;
     $('resultLabel').textContent = 'Resized — ' + out.outW + ' × ' + out.outH;
     $('previewSection').style.display = 'block';
     $('downloadBtn').disabled = false;
@@ -1422,16 +1655,15 @@
       (mode === 'cover' ? 'filled with no padding' :
        mode === 'shrink' ? 'scaled to fit with no padding added' :
        'scaled to fit and padded') +
-      '. Saved as ' + resultFileName, 'ok');
+      '. Saved as ' + esc(resultFileName) + ' — ' + sizeShift(currentFile.size, resultBlob.size), 'ok');
   }
 
   // ── Bulk: process all ─────────────────────────────────────────────────────
   async function processBulk() {
     if (!bulkQueue.length) { showStatus('Add some images first.', 'error'); return; }
-    const tw = parseInt($('targetW').value);
-    const th = parseInt($('targetH').value);
-    if (!tw || !th || tw < 1 || th < 1) { showStatus('Enter a width and height of at least 1 px.', 'error'); return; }
-    if (tw > 8000 || th > 8000) { showStatus('8000 px is the largest dimension this tool handles.', 'error'); return; }
+    const sizes = dimsValid();
+    if (!sizes.ok) { showStatus(sizes.msg, 'error'); return; }
+    const tw = sizes.tw, th = sizes.th;
 
     $('bulkProcessBtn').disabled = true;
     $('bulkDownloadBtn').disabled = true;
@@ -1444,10 +1676,11 @@
     overall.classList.add('visible');
     overallBar.classList.remove('done');
 
-    bulkQueue.forEach(item => { item.status = 'pending'; item.resultDataUrl = null; item.resultFileName = null; });
+    bulkQueue.forEach(item => { item.status = 'pending'; item.blob = null; item.resultFileName = null; });
     renderBulkQueue();
 
-    let doneCount = 0;
+    const taken = new Set();
+    let doneCount = 0, passedCount = 0;
     for (let idx = 0; idx < bulkQueue.length; idx++) {
       const item = bulkQueue[idx];
       item.status = 'active';
@@ -1461,15 +1694,17 @@
       if (rowEl) rowEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 
       try {
-        if (!item.dataUrl) item.dataUrl = await readFileAsDataUrl(item.file);
-        const { dataUrl, fileName } = await renderOneImage(item.file, item.dataUrl, item.kind);
-        item.resultDataUrl = dataUrl;
+        // A pass-through never needs the pixels, so skip the decode entirely.
+        if (!item.dataUrl && !canPassThrough(item.file)) item.dataUrl = await readFileAsDataUrl(item.file);
+        const { blob, fileName, passed } = await renderOneImage(item.file, item.dataUrl, item.kind, taken);
+        item.blob = blob;
         item.resultFileName = fileName;
-        item.status = 'done';
-        bulkResults.push({ dataUrl, fileName });
-        doneCount++;
+        item.status = passed ? 'kept' : 'done';
+        bulkResults.push({ blob, fileName });
+        if (passed) passedCount++; else doneCount++;
       } catch (err) {
         item.status = 'error';
+        item.errorMsg = err.message;
         console.error('Error processing ' + item.file.name + ':', err);
       }
       renderBulkQueue();
@@ -1479,13 +1714,19 @@
     overallBar.style.width = '100%';
     overallPct.textContent = '100%';
     overallBar.classList.add('done');
-    overallLabel.textContent = doneCount + ' of ' + bulkQueue.length + ' finished';
+    overallLabel.textContent = (doneCount + passedCount) + ' of ' + bulkQueue.length + ' finished';
 
     syncDimValidity();
     if (bulkResults.length > 0) $('bulkDownloadBtn').disabled = false;
-    const errors = bulkQueue.length - doneCount;
+    const errors = bulkQueue.length - doneCount - passedCount;
+    const verb = keepOriginal ? 'converted' : 'resized';
     if (errors > 0) {
-      showStatus(doneCount + ' resized, ' + errors + ' failed. The browser console has the details for the failures.', 'error');
+      showStatus(doneCount + ' ' + verb + ', ' + errors + ' failed. The browser console has the details for the failures.', 'error');
+    } else if (keepOriginal) {
+      const before = bulkQueue.reduce((n, i) => n + i.file.size, 0);
+      const after = bulkResults.reduce((n, r) => n + r.blob.size, 0);
+      showStatus('All ' + bulkQueue.length + ' images are ' + fmt($('outputFormat').value).label + ' now, at their original sizes — ' +
+        (passedCount ? passedCount + ' passed through untouched, ' : '') + sizeShift(before, after) + '.', 'ok');
     } else {
       showStatus('All ' + doneCount + ' images done at ' + tw + ' × ' + th + ' px — ' + queueSplit() + '.', 'ok');
     }
@@ -1498,16 +1739,16 @@
     $('bulkDownloadBtn').disabled = true;
     try {
       const zip = new JSZip();
-      bulkResults.forEach(({ dataUrl, fileName }) => {
-        const base64 = dataUrl.split(',')[1];
-        zip.file(fileName, base64, { base64: true });
-      });
-      const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+      bulkResults.forEach(({ blob, fileName }) => zip.file(fileName, blob));
+      const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
       const tw = parseInt($('targetW').value);
       const th = parseInt($('targetH').value);
-      const url = URL.createObjectURL(blob);
+      const stem = keepOriginal
+        ? 'converted_' + fmt($('outputFormat').value).ext
+        : 'resized_' + tw + 'x' + th;
+      const url = URL.createObjectURL(zipBlob);
       const a = document.createElement('a');
-      a.href = url; a.download = 'resized_' + tw + 'x' + th + '_' + bulkResults.length + 'images.zip'; a.click();
+      a.href = url; a.download = stem + '_' + bulkResults.length + 'images.zip'; a.click();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
       showStatus('ZIP downloaded with ' + bulkResults.length + ' images.', 'ok');
     } catch (err) {
@@ -1517,8 +1758,8 @@
   }
 
   function downloadResult() {
-    if (!resultDataUrl) return;
-    const a = document.createElement('a'); a.href = resultDataUrl; a.download = resultFileName; a.click();
+    if (!resultUrl) return;
+    const a = document.createElement('a'); a.href = resultUrl; a.download = resultFileName; a.click();
   }
 
 
@@ -1533,8 +1774,9 @@
   }
 
   // ── Init ───────────────────────────────────────────────────────────────────
-  onBgModeChange();
+  setMode('single');
   updateFitInfo();
+  probeEncoders();
 </script>
 </body>
 </html>
