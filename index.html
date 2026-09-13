@@ -671,6 +671,13 @@
   // UTIF decodes only pixels, not files, so a page's raw RGBA has to be
   // painted onto a canvas by hand to get back to something the rest of the
   // pipeline (which only speaks Blob/<img>) can use.
+  // Decoding a TIFF means holding the whole image as raw RGBA at once (plus a
+  // canvas copy, plus the re-encoded PNG) with nothing like a browser's own
+  // streaming/tiled image decoder underneath it. A very large print-resolution
+  // scan can run the tab out of memory outright (surfacing as a cryptic
+  // ERR_BLOB_OUT_OF_MEMORY or a plain "could not be decoded"), so pixel count
+  // is checked against a conservative ceiling before that work is attempted.
+  const MAX_TIFF_PIXELS = 100_000_000; // ~100MP, e.g. 10000x10000
   async function convertTiff(file) {
     if (typeof UTIF === 'undefined') {
       throw new Error('TIFF support did not load — check your connection and try again.');
@@ -679,6 +686,14 @@
     const ifds = UTIF.decode(buf);
     if (!ifds || !ifds.length) throw new Error('This TIFF has no readable pages.');
     const ifd = ifds[0];
+    // .width/.height only get set once decodeImage runs — the raw tags are
+    // already there right after decode() and are what the size has to be
+    // checked against before paying for that expensive step.
+    const rawW = ifd['t256'] && ifd['t256'][0], rawH = ifd['t257'] && ifd['t257'][0];
+    if (rawW && rawH && rawW * rawH > MAX_TIFF_PIXELS) {
+      throw new Error('This TIFF is ' + rawW + '×' + rawH +
+        ' (' + Math.round(rawW * rawH / 1e6) + ' megapixels) — too large to convert in the browser. Downsize or re-save it at a smaller resolution first.');
+    }
     UTIF.decodeImage(buf, ifd);
     const rgba = UTIF.toRGBA8(ifd);
     const canvas = document.createElement('canvas');
@@ -740,6 +755,33 @@
       return blobFromCanvas(canvas);
     });
   }
+
+  // A file's name and MIME type are just labels a browser or OS attached —
+  // nothing stops them from lying (an export tool renaming a TIFF to .jpg, a
+  // download losing its type, and so on). When every decoder that the name
+  // says *should* work has already failed, the actual bytes are checked
+  // against each format's real signature so a mislabeled file still gets
+  // routed to a decoder that can read it, and a genuinely unsupported one
+  // gets a message that says so instead of a raw parser stack trace.
+  async function sniffFormat(blob) {
+    const head = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
+    const at = (i, b) => head[i] === b;
+    if (head.length >= 3 && at(0,0xFF) && at(1,0xD8) && at(2,0xFF)) return 'jpeg';
+    if (head.length >= 4 && at(0,0x89) && at(1,0x50) && at(2,0x4E) && at(3,0x47)) return 'png';
+    if (head.length >= 4 && ((at(0,0x49)&&at(1,0x49)&&at(2,0x2A)&&at(3,0x00)) || (at(0,0x4D)&&at(1,0x4D)&&at(2,0x00)&&at(3,0x2A)))) return 'tiff';
+    if (head.length >= 4 && at(0,0x38) && at(1,0x42) && at(2,0x50) && at(3,0x53)) return 'psd'; // "8BPS"
+    if (head.length >= 12 && at(4,0x66) && at(5,0x74) && at(6,0x79) && at(7,0x70)) { // "....ftyp"
+      const brand = String.fromCharCode(head[8], head[9], head[10], head[11]);
+      if (/^(heic|heix|hevc|hevx|mif1|msf1)$/.test(brand)) return 'heic';
+    }
+    if (head.length >= 3 && at(0,0x47) && at(1,0x49) && at(2,0x46)) return 'gif';
+    if (head.length >= 2 && at(0,0x42) && at(1,0x4D)) return 'bmp';
+    if (head.length >= 12 && at(0,0x52) && at(1,0x49) && at(2,0x46) && at(3,0x46) &&
+        head[8]===0x57 && head[9]===0x45 && head[10]===0x42 && head[11]===0x50) return 'webp';
+    return null;
+  }
+
+  const SNIFF_CONVERTERS = { heic: convertHeic, tiff: convertTiff, psd: convertPsd };
 
   function bytes(n) {
     if (n < 1024) return n + ' B';
@@ -1009,9 +1051,10 @@
     $('fileInfo').textContent = file.name + '  ·  ' + (file.size/1024/1024).toFixed(2) + ' MB  ·  reading';
     showStatus(needsConversion(file) ? 'Converting the file.' : 'Reading the file.', 'info');
 
-    // isFallback stops a JPEG that fails even after CMYK conversion from
-    // looping back into convertJpegFallback a second time.
-    function attachPreview(dataUrl, isFallback) {
+    // isFallback stops a file that fails even after one conversion attempt
+    // from looping back into another conversion a second time. blob is what
+    // dataUrl was made from — kept around so onerror can sniff its real bytes.
+    function attachPreview(dataUrl, blob, isFallback) {
       cachedDataUrl = dataUrl;
       const probe = new Image();
       probe.onload = () => {
@@ -1025,20 +1068,41 @@
         showStatus(file.name + ' is ready. Drag on the image to crop it, or leave it as is.', 'info');
       };
       probe.onerror = () => {
-        if (!isFallback && isJpeg(file)) {
-          showStatus('The browser could not open this JPEG directly — trying it as a CMYK JPEG.', 'info');
-          convertJpegFallback(file).then(blob => readFileAsDataUrl(blob)).then(fallbackUrl => attachPreview(fallbackUrl, true))
-            .catch(err => showStatus('The file was read but the image could not be decoded — ' + err.message, 'error'));
+        if (isFallback) {
+          showStatus('The file was read but the image could not be decoded. Try re-saving it.', 'error');
           return;
         }
-        showStatus('The file was read but the image could not be decoded. Try re-saving it.', 'error');
+        // The name/type said this should already open — check what the bytes
+        // actually are before giving up. A mislabeled file gets routed to the
+        // decoder for its real format; a JPEG that still won't open gets the
+        // CMYK fallback.
+        sniffFormat(blob).catch(() => null).then(sniffed => {
+          const converter = sniffed && SNIFF_CONVERTERS[sniffed];
+          const useJpegFallback = sniffed === 'jpeg' || (!sniffed && isJpeg(file));
+          if (!converter && !useJpegFallback) {
+            showStatus(sniffed
+              ? 'This file is actually a ' + sniffed.toUpperCase() + ', not what its name suggests, and still could not be decoded.'
+              : "This file's contents don't match any supported image format.", 'error');
+            return;
+          }
+          showStatus('The browser could not open this file directly — trying it as ' +
+            (converter ? 'a ' + sniffed.toUpperCase() : 'a CMYK JPEG') + '.', 'info');
+          (converter ? converter(blob) : convertJpegFallback(blob))
+            .then(converted => readFileAsDataUrl(converted).then(fallbackUrl => attachPreview(fallbackUrl, converted, true)))
+            // A real-format converter (TIFF/PSD/HEIC) already throws a clear
+            // message of its own; jpeg-js's raw parser errors do not, so those
+            // get replaced with something a user can actually act on.
+            .catch(err => showStatus(converter
+              ? err.message
+              : "This JPEG's bytes look valid but could not be decoded — it may be truncated or corrupt.", 'error'));
+        });
       };
       probe.src = dataUrl;
       $('previewOriginal').src = dataUrl;
     }
 
-    toStandardBlob(file).then(readable => readFileAsDataUrl(readable)).then(dataUrl => {
-      attachPreview(dataUrl, false);
+    toStandardBlob(file).then(readable => readFileAsDataUrl(readable).then(dataUrl => ({ readable, dataUrl }))).then(({ readable, dataUrl }) => {
+      attachPreview(dataUrl, readable, false);
     }).catch(err => showStatus('The file could not be read — ' + err.message, 'error'));
   }
 
@@ -1481,9 +1545,29 @@
       try {
         return await decodeBlobOnce(source, label);
       } catch (e) {
-        if (!isJpeg(source)) throw e;
-        const converted = await convertJpegFallback(source);
-        return await decodeBlobOnce(converted, label);
+        // The name/type said this should already be something the browser
+        // can open, and that just failed — so before giving up, check what
+        // the bytes actually are. A mislabeled file gets routed to the
+        // decoder that matches its real format; a JPEG that still won't
+        // open gets the CMYK fallback; anything else gets a clear message
+        // instead of a raw parser error.
+        const sniffed = await sniffFormat(source).catch(() => null);
+        const converter = sniffed && SNIFF_CONVERTERS[sniffed];
+        if (converter) return await decodeBlobOnce(await converter(source), label);
+        if (sniffed === 'jpeg' || (!sniffed && isJpeg(source))) {
+          try {
+            const converted = await convertJpegFallback(source);
+            return await decodeBlobOnce(converted, label);
+          } catch (e2) {
+            throw new Error(sniffed
+              ? "This JPEG's bytes look valid but could not be decoded — it may be truncated or corrupt."
+              : "This file's contents don't match any supported image format.");
+          }
+        }
+        if (sniffed) {
+          throw new Error('This file is actually a ' + sniffed.toUpperCase() + ', not what its name suggests, and still could not be decoded.');
+        }
+        throw new Error("This file's contents don't match any supported image format.");
       }
     }
     return loadImage(source, label);
