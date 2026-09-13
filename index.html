@@ -366,12 +366,12 @@
   <div id="singleSection">
     <div class="sec"><span class="sec-num">01</span><h2>Source image</h2><span class="sec-rule"></span></div>
     <div class="drop" id="dropZone" onclick="document.getElementById('fileInput').click()">
-      <input type="file" id="fileInput" accept="image/*" onchange="onFileSelected(this.files[0])"/>
+      <input type="file" id="fileInput" accept="image/*,.heic,.heif,.tif,.tiff,.psd" onchange="onFileSelected(this.files[0])"/>
       <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
       </svg>
       <p class="drop-title">Choose an image or drop one here</p>
-      <p class="drop-hint">PNG, JPEG, WebP, GIF</p>
+      <p class="drop-hint">PNG, JPEG, WebP, GIF, HEIC, TIFF, PSD</p>
       <p id="fileInfo"></p>
     </div>
 
@@ -404,7 +404,7 @@
   <div id="bulkSection" style="display:none">
     <div class="sec"><span class="sec-num">01</span><h2>Source images</h2><span class="sec-rule"></span></div>
     <div class="drop" id="bulkDropZone" onclick="document.getElementById('bulkFileInput').click()">
-      <input type="file" id="bulkFileInput" accept="image/*" multiple onchange="onBulkFilesSelected(this.files)"/>
+      <input type="file" id="bulkFileInput" accept="image/*,.heic,.heif,.tif,.tiff,.psd" multiple onchange="onBulkFilesSelected(this.files)"/>
       <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
       </svg>
@@ -576,6 +576,16 @@
 
 <!-- JSZip for batch ZIP download -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<!-- Decoders for formats the browser cannot open natively -->
+<script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/utif@3.1.0/UTIF.js"></script>
+<script type="module">
+  // ag-psd only ships as an ES module, so it is loaded through jsDelivr's
+  // module build and handed to the classic script below via window.
+  window.__agPsdReady = import('https://cdn.jsdelivr.net/npm/ag-psd@31.0.2/+esm')
+    .then(m => { window.__agPsdReadPsd = m.readPsd; })
+    .catch(() => {});
+</script>
 <script>
   // ── State ──────────────────────────────────────────────────────────────────
   let currentMode = 'single';
@@ -615,6 +625,90 @@
     if (/\.jpe?g$/i.test(file.name)) return 'JPEG';
     if (/^image\/(\w+)/.test(file.type || '')) return RegExp.$1.toUpperCase();
     return (file.name.split('.').pop() || 'image').toUpperCase();
+  }
+
+  // Browsers cannot decode HEIC/HEIF, TIFF, or PSD in <img> or
+  // createImageBitmap, so those are converted to a plain PNG/JPEG blob in JS
+  // before anything downstream ever touches them. Windows/Chrome also hand
+  // back an empty file.type for most of these, so the extension is checked too.
+  function isHeic(file) {
+    const type = (file.type || '').toLowerCase();
+    return type === 'image/heic' || type === 'image/heif' ||
+      type === 'image/heic-sequence' || type === 'image/heif-sequence' ||
+      /\.hei[cf]$/i.test(file.name || '');
+  }
+  function isTiff(file) {
+    const type = (file.type || '').toLowerCase();
+    return type === 'image/tiff' || /\.tiff?$/i.test(file.name || '');
+  }
+  function isPsd(file) {
+    const type = (file.type || '').toLowerCase();
+    return type === 'image/vnd.adobe.photoshop' || type === 'application/x-photoshop' ||
+      type === 'image/x-psd' || /\.psd$/i.test(file.name || '');
+  }
+  function needsConversion(file) { return isHeic(file) || isTiff(file) || isPsd(file); }
+
+  async function convertHeic(file) {
+    if (typeof heic2any !== 'function') {
+      throw new Error('HEIC support did not load — check your connection and try again.');
+    }
+    const out = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 });
+    return Array.isArray(out) ? out[0] : out;
+  }
+
+  function blobFromCanvas(canvas) {
+    return new Promise((resolve, reject) => {
+      canvas.toBlob(b => b ? resolve(b) : reject(new Error('The browser could not export the converted image.')), 'image/png');
+    });
+  }
+
+  // UTIF decodes only pixels, not files, so a page's raw RGBA has to be
+  // painted onto a canvas by hand to get back to something the rest of the
+  // pipeline (which only speaks Blob/<img>) can use.
+  async function convertTiff(file) {
+    if (typeof UTIF === 'undefined') {
+      throw new Error('TIFF support did not load — check your connection and try again.');
+    }
+    const buf = await file.arrayBuffer();
+    const ifds = UTIF.decode(buf);
+    if (!ifds || !ifds.length) throw new Error('This TIFF has no readable pages.');
+    const ifd = ifds[0];
+    UTIF.decodeImage(buf, ifd);
+    const rgba = UTIF.toRGBA8(ifd);
+    const canvas = document.createElement('canvas');
+    canvas.width = ifd.width; canvas.height = ifd.height;
+    const ctx = canvas.getContext('2d');
+    const imgData = ctx.createImageData(ifd.width, ifd.height);
+    imgData.data.set(rgba);
+    ctx.putImageData(imgData, 0, 0);
+    return blobFromCanvas(canvas);
+  }
+
+  // PSDs can carry dozens of layers, adjustment layers and effects with no
+  // single "real" pixel grid — the flattened composite ag-psd builds is the
+  // one raster every PSD already carries for exactly this purpose (it is what
+  // Photoshop shows as the thumbnail), so that is what gets converted.
+  async function convertPsd(file) {
+    if (window.__agPsdReady) { try { await window.__agPsdReady; } catch (e) { /* handled below */ } }
+    if (typeof window.__agPsdReadPsd !== 'function') {
+      throw new Error('PSD support did not load — check your connection and try again.');
+    }
+    const buf = await file.arrayBuffer();
+    const psd = window.__agPsdReadPsd(buf);
+    if (!psd || !psd.canvas) throw new Error('This PSD has no flattened image to convert.');
+    return blobFromCanvas(psd.canvas);
+  }
+
+  // Keyed by file so a source decoded twice (bulk pre-check, then export)
+  // only pays the conversion cost once.
+  const rasterCache = new WeakMap();
+  function toStandardBlob(file) {
+    if (!(file instanceof Blob) || !needsConversion(file)) return Promise.resolve(file);
+    if (!rasterCache.has(file)) {
+      const converter = isHeic(file) ? convertHeic : isTiff(file) ? convertTiff : convertPsd;
+      rasterCache.set(file, converter(file));
+    }
+    return rasterCache.get(file);
   }
 
   function bytes(n) {
@@ -872,8 +966,8 @@
   });
 
   function onFileSelected(file) {
-    if (!file || !file.type.startsWith('image/')) {
-      showStatus('That file is not an image. Pick a PNG, JPEG, WebP, or GIF.', 'error'); return;
+    if (!file || !(file.type.startsWith('image/') || IMAGE_EXT.test(file.name || ''))) {
+      showStatus('That file is not an image. Pick a PNG, JPEG, WebP, GIF, HEIC, TIFF, or PSD.', 'error'); return;
     }
     currentFile = file; cachedDataUrl = null; resultBlob = null; detectedKind = null;
     cropRect = null; cropPreviewUrl = null; singleReady = false;
@@ -883,9 +977,9 @@
     $('previewSection').style.display = 'none';
     hideProgress();
     $('fileInfo').textContent = file.name + '  ·  ' + (file.size/1024/1024).toFixed(2) + ' MB  ·  reading';
-    showStatus('Reading the file.', 'info');
+    showStatus(needsConversion(file) ? 'Converting the file.' : 'Reading the file.', 'info');
 
-    readFileAsDataUrl(file).then(dataUrl => {
+    toStandardBlob(file).then(readable => readFileAsDataUrl(readable)).then(dataUrl => {
       cachedDataUrl = dataUrl;
       const probe = new Image();
       probe.onload = () => {
@@ -958,7 +1052,7 @@
 
   // Folder drops bring along .DS_Store and friends. Those are noise rather than
   // rejected input, so they are dropped without being counted or reported.
-  const IMAGE_EXT = /\.(png|jpe?g|webp|gif|bmp|avif)$/i;
+  const IMAGE_EXT = /\.(png|jpe?g|webp|gif|bmp|avif|hei[cf]|tiff?|psd)$/i;
   function looksLikeImage(f) { return f.type.startsWith('image/') || IMAGE_EXT.test(f.name); }
   function isNoise(f) { return f.name.startsWith('.') || f.name === 'Thumbs.db'; }
 
@@ -1327,6 +1421,7 @@
   // string work, which is what makes a folder of hundreds practical.
   async function decodeSource(source, label) {
     if (source instanceof Blob) {
+      source = await toStandardBlob(source);
       if (window.createImageBitmap) {
         try { return await createImageBitmap(source); } catch (e) { /* fall back below */ }
       }
