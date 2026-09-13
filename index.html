@@ -1583,9 +1583,18 @@
     const format = $('outputFormat').value;
 
     // Already the right type and nothing else is changing, so ship the bytes
-    // we were given instead of decoding and re-encoding them.
+    // we were given instead of decoding and re-encoding them. The File object
+    // itself is not used directly: on a big batch (especially a folder drop)
+    // its underlying OS handle can go stale by the time the ZIP is actually
+    // built, which is a separate, user-paced step after this all finishes —
+    // "could not be read... permission problems... after a reference to a
+    // file was acquired" is the browser's way of saying that happened. Reading
+    // it now, while the handle is still fresh, and keeping the bytes as a
+    // plain in-memory Blob sidesteps that entirely.
     if (canPassThrough(file)) {
-      return { blob: file, fileName: name || outputName(file, format, 0, 0, taken), passed: true };
+      const buf = await file.arrayBuffer();
+      const blob = new Blob([buf], { type: file.type || 'application/octet-stream' });
+      return { blob, fileName: name || outputName(file, format, 0, 0, taken), passed: true };
     }
 
     const tw = parseInt($('targetW').value);
