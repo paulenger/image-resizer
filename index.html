@@ -581,6 +581,10 @@
 <!-- UTIF reads this as a bare global (window.pako), so it must load first -->
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/utif@3.1.0/UTIF.js"></script>
+<!-- Fallback JPEG decoder: browsers refuse to open some CMYK-color-space
+     JPEGs (common from print/prepress exports) even though the bytes are
+     otherwise valid, so this is only reached when the native decoder fails. -->
+<script src="https://cdn.jsdelivr.net/npm/jpeg-js@0.4.4/lib/decoder.js"></script>
 <script type="module">
   // ag-psd only ships as an ES module, so it is loaded through jsDelivr's
   // module build and handed to the classic script below via window.
@@ -711,6 +715,30 @@
       rasterCache.set(file, converter(file));
     }
     return rasterCache.get(file);
+  }
+
+  // Unlike HEIC/TIFF/PSD, a JPEG's bytes are normally something the browser
+  // already handles — this path is a fallback, only reached once the native
+  // decoder has already thrown. In practice that is almost always a JPEG
+  // encoded in the CMYK color space (common out of print/prepress tools),
+  // which some browsers refuse outright even though the bytes are valid.
+  function isJpeg(file) {
+    const type = (file.type || '').toLowerCase();
+    return type === 'image/jpeg' || type === 'image/jpg' || /\.jpe?g$/i.test(file.name || '');
+  }
+  function convertJpegFallback(file) {
+    if (typeof window['jpeg-js'] === 'undefined' || typeof window['jpeg-js'].decode !== 'function') {
+      return Promise.reject(new Error('CMYK JPEG support did not load — check your connection and try again.'));
+    }
+    return file.arrayBuffer().then(buf => {
+      const raw = window['jpeg-js'].decode(new Uint8Array(buf), { useTArray: true });
+      const canvas = document.createElement('canvas');
+      canvas.width = raw.width; canvas.height = raw.height;
+      const ctx = canvas.getContext('2d');
+      const imgData = new ImageData(new Uint8ClampedArray(raw.data), raw.width, raw.height);
+      ctx.putImageData(imgData, 0, 0);
+      return blobFromCanvas(canvas);
+    });
   }
 
   function bytes(n) {
@@ -981,7 +1009,9 @@
     $('fileInfo').textContent = file.name + '  ·  ' + (file.size/1024/1024).toFixed(2) + ' MB  ·  reading';
     showStatus(needsConversion(file) ? 'Converting the file.' : 'Reading the file.', 'info');
 
-    toStandardBlob(file).then(readable => readFileAsDataUrl(readable)).then(dataUrl => {
+    // isFallback stops a JPEG that fails even after CMYK conversion from
+    // looping back into convertJpegFallback a second time.
+    function attachPreview(dataUrl, isFallback) {
       cachedDataUrl = dataUrl;
       const probe = new Image();
       probe.onload = () => {
@@ -994,9 +1024,21 @@
         updateFitInfo();
         showStatus(file.name + ' is ready. Drag on the image to crop it, or leave it as is.', 'info');
       };
-      probe.onerror = () => showStatus('The file was read but the image could not be decoded. Try re-saving it.', 'error');
+      probe.onerror = () => {
+        if (!isFallback && isJpeg(file)) {
+          showStatus('The browser could not open this JPEG directly — trying it as a CMYK JPEG.', 'info');
+          convertJpegFallback(file).then(blob => readFileAsDataUrl(blob)).then(fallbackUrl => attachPreview(fallbackUrl, true))
+            .catch(err => showStatus('The file was read but the image could not be decoded — ' + err.message, 'error'));
+          return;
+        }
+        showStatus('The file was read but the image could not be decoded. Try re-saving it.', 'error');
+      };
       probe.src = dataUrl;
       $('previewOriginal').src = dataUrl;
+    }
+
+    toStandardBlob(file).then(readable => readFileAsDataUrl(readable)).then(dataUrl => {
+      attachPreview(dataUrl, false);
     }).catch(err => showStatus('The file could not be read — ' + err.message, 'error'));
   }
 
@@ -1421,18 +1463,28 @@
   // createImageBitmap decodes the file bytes directly, skipping the base64
   // detour a data URL forces — a third less memory per image and no main-thread
   // string work, which is what makes a folder of hundreds practical.
+  async function decodeBlobOnce(blob, label) {
+    if (window.createImageBitmap) {
+      try { return await createImageBitmap(blob); } catch (e) { /* fall back below */ }
+    }
+    const url = URL.createObjectURL(blob);
+    try {
+      const img = await loadImage(url, label);
+      img._revoke = url;
+      return img;
+    } catch (e) { URL.revokeObjectURL(url); throw e; }
+  }
+
   async function decodeSource(source, label) {
     if (source instanceof Blob) {
       source = await toStandardBlob(source);
-      if (window.createImageBitmap) {
-        try { return await createImageBitmap(source); } catch (e) { /* fall back below */ }
-      }
-      const url = URL.createObjectURL(source);
       try {
-        const img = await loadImage(url, label);
-        img._revoke = url;
-        return img;
-      } catch (e) { URL.revokeObjectURL(url); throw e; }
+        return await decodeBlobOnce(source, label);
+      } catch (e) {
+        if (!isJpeg(source)) throw e;
+        const converted = await convertJpegFallback(source);
+        return await decodeBlobOnce(converted, label);
+      }
     }
     return loadImage(source, label);
   }
