@@ -662,22 +662,20 @@
     return Array.isArray(out) ? out[0] : out;
   }
 
-  function blobFromCanvas(canvas) {
-    return new Promise((resolve, reject) => {
-      canvas.toBlob(b => b ? resolve(b) : reject(new Error('The browser could not export the converted image.')), 'image/png');
-    });
-  }
-
   // UTIF decodes only pixels, not files, so a page's raw RGBA has to be
   // painted onto a canvas by hand to get back to something the rest of the
-  // pipeline (which only speaks Blob/<img>) can use.
-  // Decoding a TIFF means holding the whole image as raw RGBA at once (plus a
-  // canvas copy, plus the re-encoded PNG) with nothing like a browser's own
-  // streaming/tiled image decoder underneath it. A very large print-resolution
-  // scan can run the tab out of memory outright (surfacing as a cryptic
-  // ERR_BLOB_OUT_OF_MEMORY or a plain "could not be decoded"), so pixel count
-  // is checked against a conservative ceiling before that work is attempted.
-  const MAX_TIFF_PIXELS = 100_000_000; // ~100MP, e.g. 10000x10000
+  // pipeline can use. The canvas is handed back as-is (ctx.drawImage takes a
+  // canvas directly) rather than round-tripped through canvas.toBlob and back
+  // through a decoder — for a large TIFF that round trip was a second full
+  // copy of the image sitting in memory for no reason, and on a real
+  // print-resolution scan that was enough on its own to exhaust the tab
+  // (ERR_BLOB_OUT_OF_MEMORY, or a bare "could not be decoded").
+  //
+  // Even with that fixed, holding the whole image as raw RGBA at once has no
+  // equivalent to a browser's own streaming/tiled decoder, so pixel count is
+  // still checked against a conservative ceiling before that work is
+  // attempted at all.
+  const MAX_TIFF_PIXELS = 40_000_000; // ~40MP, e.g. 8000x5000
   async function convertTiff(file) {
     if (typeof UTIF === 'undefined') {
       throw new Error('TIFF support did not load — check your connection and try again.');
@@ -702,13 +700,15 @@
     const imgData = ctx.createImageData(ifd.width, ifd.height);
     imgData.data.set(rgba);
     ctx.putImageData(imgData, 0, 0);
-    return blobFromCanvas(canvas);
+    return canvas;
   }
 
   // PSDs can carry dozens of layers, adjustment layers and effects with no
   // single "real" pixel grid — the flattened composite ag-psd builds is the
   // one raster every PSD already carries for exactly this purpose (it is what
-  // Photoshop shows as the thumbnail), so that is what gets converted.
+  // Photoshop shows as the thumbnail), so that is what gets converted. It is
+  // already a canvas, so — same reasoning as TIFF above — it is handed back
+  // directly instead of round-tripped through a PNG blob and re-decoded.
   async function convertPsd(file) {
     if (window.__agPsdReady) { try { await window.__agPsdReady; } catch (e) { /* handled below */ } }
     if (typeof window.__agPsdReadPsd !== 'function') {
@@ -717,13 +717,15 @@
     const buf = await file.arrayBuffer();
     const psd = window.__agPsdReadPsd(buf);
     if (!psd || !psd.canvas) throw new Error('This PSD has no flattened image to convert.');
-    return blobFromCanvas(psd.canvas);
+    return psd.canvas;
   }
 
   // Keyed by file so a source decoded twice (bulk pre-check, then export)
-  // only pays the conversion cost once.
+  // only pays the conversion cost once. Resolves to a Blob (HEIC) or, for
+  // TIFF/PSD, a canvas already holding the decoded pixels — decodeSource
+  // below knows to use a canvas as-is instead of decoding it again.
   const rasterCache = new WeakMap();
-  function toStandardBlob(file) {
+  function toDecodableSource(file) {
     if (!(file instanceof Blob) || !needsConversion(file)) return Promise.resolve(file);
     if (!rasterCache.has(file)) {
       const converter = isHeic(file) ? convertHeic : isTiff(file) ? convertTiff : convertPsd;
@@ -752,7 +754,7 @@
       const ctx = canvas.getContext('2d');
       const imgData = new ImageData(new Uint8ClampedArray(raw.data), raw.width, raw.height);
       ctx.putImageData(imgData, 0, 0);
-      return blobFromCanvas(canvas);
+      return canvas;
     });
   }
 
@@ -1028,6 +1030,15 @@
     });
   }
 
+  // A TIFF/PSD conversion hands back a canvas rather than a Blob (see
+  // toDecodableSource) — toDataURL covers that case directly, no FileReader
+  // needed.
+  function dataUrlFrom(source) {
+    return source instanceof HTMLCanvasElement
+      ? Promise.resolve(source.toDataURL('image/png'))
+      : readFileAsDataUrl(source);
+  }
+
   // ── Single drag & drop ────────────────────────────────────────────────────
   const dz = $('dropZone');
   dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
@@ -1088,7 +1099,7 @@
           showStatus('The browser could not open this file directly — trying it as ' +
             (converter ? 'a ' + sniffed.toUpperCase() : 'a CMYK JPEG') + '.', 'info');
           (converter ? converter(blob) : convertJpegFallback(blob))
-            .then(converted => readFileAsDataUrl(converted).then(fallbackUrl => attachPreview(fallbackUrl, converted, true)))
+            .then(converted => dataUrlFrom(converted).then(fallbackUrl => attachPreview(fallbackUrl, converted, true)))
             // A real-format converter (TIFF/PSD/HEIC) already throws a clear
             // message of its own; jpeg-js's raw parser errors do not, so those
             // get replaced with something a user can actually act on.
@@ -1101,7 +1112,7 @@
       $('previewOriginal').src = dataUrl;
     }
 
-    toStandardBlob(file).then(readable => readFileAsDataUrl(readable).then(dataUrl => ({ readable, dataUrl }))).then(({ readable, dataUrl }) => {
+    toDecodableSource(file).then(readable => dataUrlFrom(readable).then(dataUrl => ({ readable, dataUrl }))).then(({ readable, dataUrl }) => {
       attachPreview(dataUrl, readable, false);
     }).catch(err => showStatus('The file could not be read — ' + err.message, 'error'));
   }
@@ -1539,9 +1550,17 @@
     } catch (e) { URL.revokeObjectURL(url); throw e; }
   }
 
+  // TIFF/PSD conversion already hands back a canvas (see toDecodableSource) —
+  // that's a ready-to-draw image on its own, so only an actual Blob needs a
+  // decode pass.
+  function decodeConverted(converted, label) {
+    return converted instanceof HTMLCanvasElement ? converted : decodeBlobOnce(converted, label);
+  }
+
   async function decodeSource(source, label) {
     if (source instanceof Blob) {
-      source = await toStandardBlob(source);
+      source = await toDecodableSource(source);
+      if (source instanceof HTMLCanvasElement) return source;
       try {
         return await decodeBlobOnce(source, label);
       } catch (e) {
@@ -1553,11 +1572,10 @@
         // instead of a raw parser error.
         const sniffed = await sniffFormat(source).catch(() => null);
         const converter = sniffed && SNIFF_CONVERTERS[sniffed];
-        if (converter) return await decodeBlobOnce(await converter(source), label);
+        if (converter) return await decodeConverted(await converter(source), label);
         if (sniffed === 'jpeg' || (!sniffed && isJpeg(source))) {
           try {
-            const converted = await convertJpegFallback(source);
-            return await decodeBlobOnce(converted, label);
+            return await decodeConverted(await convertJpegFallback(source), label);
           } catch (e2) {
             throw new Error(sniffed
               ? "This JPEG's bytes look valid but could not be decoded — it may be truncated or corrupt."
@@ -2175,8 +2193,23 @@
     showStatus('Building the ZIP.', 'info');
     $('bulkDownloadBtn').disabled = true;
     try {
+      // A blob that read back fine moments ago can still go unreadable by the
+      // time the ZIP is actually built — a heavy batch can leave the tab
+      // right at its memory ceiling, and JSZip fails the *entire* archive
+      // over a single bad entry. Each blob is checked first so one casualty
+      // gets reported and skipped instead of losing everyone else's output.
+      const usable = [], skipped = [];
+      for (const item of bulkResults) {
+        try { await item.blob.slice(0, 1).arrayBuffer(); usable.push(item); }
+        catch (e) { skipped.push(item.fileName); }
+      }
+      if (!usable.length) {
+        showStatus('The ZIP could not be built — none of the processed images could still be read.', 'error');
+        $('bulkDownloadBtn').disabled = false;
+        return;
+      }
       const zip = new JSZip();
-      bulkResults.forEach(({ blob, fileName }) => zip.file(fileName, blob));
+      usable.forEach(({ blob, fileName }) => zip.file(fileName, blob));
       const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
       const tw = parseInt($('targetW').value);
       const th = parseInt($('targetH').value);
@@ -2185,9 +2218,13 @@
         : 'resized_' + tw + 'x' + th;
       const url = URL.createObjectURL(zipBlob);
       const a = document.createElement('a');
-      a.href = url; a.download = stem + '_' + bulkResults.length + 'images.zip'; a.click();
+      a.href = url; a.download = stem + '_' + usable.length + 'images.zip'; a.click();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
-      showStatus('ZIP downloaded with ' + bulkResults.length + ' images.', 'ok');
+      showStatus(skipped.length
+        ? 'ZIP downloaded with ' + usable.length + ' images. ' + skipped.length +
+          (skipped.length === 1 ? ' could not be read and was skipped: ' : ' could not be read and were skipped: ') +
+          esc(skipped.slice(0, 3).join(', ') + (skipped.length > 3 ? ' and ' + (skipped.length - 3) + ' more' : '')) + '.'
+        : 'ZIP downloaded with ' + usable.length + ' images.', skipped.length ? 'warn' : 'ok');
     } catch (err) {
       showStatus('The ZIP could not be built — ' + err.message, 'error');
     }
