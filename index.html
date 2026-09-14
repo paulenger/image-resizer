@@ -2231,34 +2231,6 @@
       ? 'converted_' + fmt($('outputFormat').value).ext
       : 'resized_' + tw + 'x' + th;
 
-    // For hundreds of images, the previous approach — build the *entire* ZIP
-    // as one in-memory Blob, then hand it to a <a download> click — means the
-    // tab is holding every converted image, the whole ZIP's compressed bytes,
-    // AND whatever the browser buffers to actually write the download, all
-    // at once. That is real memory pressure on top of everything already
-    // spent decoding/converting the batch, and it is what was making the
-    // download itself flaky (a vague "check your connection" failure for a
-    // download that never touches the network). Where the browser supports
-    // it, the ZIP is instead streamed straight to a file on disk as JSZip
-    // produces each chunk, so the fully-built archive is never held in
-    // memory at all. The picker has to be requested up front, synchronously
-    // with the click that triggered this, or Chrome refuses it once any
-    // `await` has run.
-    let fileHandle = null;
-    if (window.showSaveFilePicker) {
-      try {
-        fileHandle = await window.showSaveFilePicker({
-          suggestedName: stem + '_' + bulkResults.length + 'images.zip',
-          types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }],
-        });
-      } catch (err) {
-        if (err && err.name === 'AbortError') { showStatus('ZIP download cancelled.', 'info'); return; }
-        // Picker can refuse for reasons unrelated to the batch itself (an
-        // iframe, a policy-restricted context, and so on) — the classic
-        // Blob+<a download> route below still works in that case.
-      }
-    }
-
     showStatus('Building the ZIP.', 'info');
     $('bulkDownloadBtn').disabled = true;
     try {
@@ -2280,37 +2252,17 @@
       const zip = new JSZip();
       usable.forEach(({ blob, fileName }) => zip.file(fileName, blob));
 
-      if (fileHandle) {
-        const writable = await fileHandle.createWritable();
-        try {
-          await new Promise((resolve, reject) => {
-            const stream = zip.generateInternalStream({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
-            stream.on('data', (chunk) => {
-              // write() is async; pausing until it resolves is what keeps
-              // memory bounded to roughly one chunk instead of the whole ZIP.
-              stream.pause();
-              writable.write(chunk).then(() => stream.resume()).catch(reject);
-            });
-            stream.on('error', reject);
-            stream.on('end', resolve);
-            stream.resume();
-          });
-        } finally {
-          await writable.close();
-        }
-      } else {
-        const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
-        // Revoking on a short fixed timer (the previous approach used 10s)
-        // could pull this out from under a download that legitimately takes
-        // longer than that to save — there is no event that says when a
-        // `download`-attribute click actually finishes writing to disk. The
-        // previous ZIP's URL is only revoked once a new one exists instead.
-        if (lastZipUrl) URL.revokeObjectURL(lastZipUrl);
-        const url = URL.createObjectURL(zipBlob);
-        lastZipUrl = url;
-        const a = document.createElement('a');
-        a.href = url; a.download = stem + '_' + usable.length + 'images.zip'; a.click();
-      }
+      const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+      // Revoking on a short fixed timer (an earlier version used 10s) could
+      // pull this out from under a download that legitimately takes longer
+      // than that to save — there is no event that says when a
+      // `download`-attribute click actually finishes writing to disk. The
+      // previous ZIP's URL is only revoked once a new one exists instead.
+      if (lastZipUrl) URL.revokeObjectURL(lastZipUrl);
+      const url = URL.createObjectURL(zipBlob);
+      lastZipUrl = url;
+      const a = document.createElement('a');
+      a.href = url; a.download = stem + '_' + usable.length + 'images.zip'; a.click();
 
       showStatus(skipped.length
         ? 'ZIP downloaded with ' + usable.length + ' images. ' + skipped.length +
