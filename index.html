@@ -605,7 +605,7 @@
   let bulkQueue = []; // { file, status, kind, blob, resultFileName, plannedName }
   let bulkResults = [];
   let bulkRunning = false, bulkCancel = false;
-  let lastZipUrl = null;
+  let lastZipUrls = [];
 
   // Fit handling
   let fitMode = 'auto';           // 'auto' | 'pad' | 'cover'
@@ -2249,26 +2249,57 @@
         $('bulkDownloadBtn').disabled = false;
         return;
       }
-      const zip = new JSZip();
-      usable.forEach(({ blob, fileName }) => zip.file(fileName, blob));
 
-      const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
-      // Revoking on a short fixed timer (an earlier version used 10s) could
-      // pull this out from under a download that legitimately takes longer
-      // than that to save — there is no event that says when a
-      // `download`-attribute click actually finishes writing to disk. The
-      // previous ZIP's URL is only revoked once a new one exists instead.
-      if (lastZipUrl) URL.revokeObjectURL(lastZipUrl);
-      const url = URL.createObjectURL(zipBlob);
-      lastZipUrl = url;
-      const a = document.createElement('a');
-      a.href = url; a.download = stem + '_' + usable.length + 'images.zip'; a.click();
+      // A batch that's mostly large, losslessly-encoded photos (a 40MP PNG
+      // alone can run 30-100+MB) adds up fast — several hundred such images
+      // in one archive can reach multiple gigabytes, and a single Blob
+      // download that size is exactly the kind of thing Chrome's download
+      // pipeline handles unreliably (a vague, misleading "check your
+      // connection" failure for something that never touches the network).
+      // Splitting into several safely-sized ZIPs instead of one huge one
+      // fixes that regardless of output format or batch size.
+      const MAX_PART_BYTES = 350 * 1024 * 1024; // ~350MB per ZIP
+      const parts = [];
+      let current = [], currentBytes = 0;
+      for (const item of usable) {
+        if (current.length && currentBytes + item.blob.size > MAX_PART_BYTES) {
+          parts.push(current); current = []; currentBytes = 0;
+        }
+        current.push(item); currentBytes += item.blob.size;
+      }
+      if (current.length) parts.push(current);
 
+      // A previous download's URLs are only revoked now, at the start of a
+      // new one — by then they are certainly done, however long they took.
+      lastZipUrls.forEach(u => URL.revokeObjectURL(u));
+      lastZipUrls = [];
+
+      for (let i = 0; i < parts.length; i++) {
+        showStatus(parts.length > 1
+          ? 'Building ZIP ' + (i + 1) + ' of ' + parts.length + '.'
+          : 'Building the ZIP.', 'info');
+        const zip = new JSZip();
+        parts[i].forEach(({ blob, fileName }) => zip.file(fileName, blob));
+        const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+        const url = URL.createObjectURL(zipBlob);
+        lastZipUrls.push(url);
+        const a = document.createElement('a');
+        const partTag = parts.length > 1 ? '_part' + (i + 1) + 'of' + parts.length : '';
+        a.href = url; a.download = stem + partTag + '_' + parts[i].length + 'images.zip'; a.click();
+        // Chrome can block a burst of automatic downloads with no gap
+        // between them — a short pause keeps each one registering as its
+        // own save rather than tripping that guard.
+        if (i < parts.length - 1) await new Promise(r => setTimeout(r, 1200));
+      }
+
+      const partsNote = parts.length > 1
+        ? ' across ' + parts.length + ' ZIP files (your browser may have asked you to allow multiple downloads)'
+        : '';
       showStatus(skipped.length
-        ? 'ZIP downloaded with ' + usable.length + ' images. ' + skipped.length +
+        ? 'ZIP downloaded with ' + usable.length + ' images' + partsNote + '. ' + skipped.length +
           (skipped.length === 1 ? ' could not be read and was skipped: ' : ' could not be read and were skipped: ') +
           esc(skipped.slice(0, 3).join(', ') + (skipped.length > 3 ? ' and ' + (skipped.length - 3) + ' more' : '')) + '.'
-        : 'ZIP downloaded with ' + usable.length + ' images.', skipped.length ? 'warn' : 'ok');
+        : 'ZIP downloaded with ' + usable.length + ' images' + partsNote + '.', skipped.length ? 'warn' : 'ok');
     } catch (err) {
       showStatus('The ZIP could not be built — ' + err.message, 'error');
     }
