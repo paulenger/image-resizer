@@ -654,12 +654,43 @@
   }
   function needsConversion(file) { return isHeic(file) || isTiff(file) || isPsd(file); }
 
+  // A 40MP product-photo TIFF is completely normal, not an edge case — but
+  // batches run several conversions in parallel (up to 4 lanes), and a JS
+  // decoder holds the *entire* image as raw, uncompressed pixels at once with
+  // nothing like a browser's own streaming/tiled decoder underneath it. Four
+  // of those in flight together is what actually exhausted the tab, not any
+  // single file's size. Rather than reject normal-sized files to guess around
+  // that, the memory-heavy part of HEIC/TIFF/PSD conversion is serialized
+  // through this gate so only a couple ever run at once, regardless of how
+  // many lanes processBulk is using for everything else.
+  const heavyGate = (() => {
+    let active = 0;
+    const MAX_CONCURRENT = 2;
+    const queue = [];
+    function acquire() {
+      if (active < MAX_CONCURRENT) { active++; return Promise.resolve(); }
+      return new Promise(resolve => queue.push(resolve));
+    }
+    function release() {
+      active--;
+      const next = queue.shift();
+      if (next) { active++; next(); }
+    }
+    return async function run(fn) {
+      await acquire();
+      try { return await fn(); }
+      finally { release(); }
+    };
+  })();
+
   async function convertHeic(file) {
     if (typeof heic2any !== 'function') {
       throw new Error('HEIC support did not load — check your connection and try again.');
     }
-    const out = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 });
-    return Array.isArray(out) ? out[0] : out;
+    return heavyGate(async () => {
+      const out = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 });
+      return Array.isArray(out) ? out[0] : out;
+    });
   }
 
   // UTIF decodes only pixels, not files, so a page's raw RGBA has to be
@@ -667,15 +698,13 @@
   // pipeline can use. The canvas is handed back as-is (ctx.drawImage takes a
   // canvas directly) rather than round-tripped through canvas.toBlob and back
   // through a decoder — for a large TIFF that round trip was a second full
-  // copy of the image sitting in memory for no reason, and on a real
-  // print-resolution scan that was enough on its own to exhaust the tab
-  // (ERR_BLOB_OUT_OF_MEMORY, or a bare "could not be decoded").
+  // copy of the image sitting in memory for no reason.
   //
-  // Even with that fixed, holding the whole image as raw RGBA at once has no
-  // equivalent to a browser's own streaming/tiled decoder, so pixel count is
-  // still checked against a conservative ceiling before that work is
-  // attempted at all.
-  const MAX_TIFF_PIXELS = 40_000_000; // ~40MP, e.g. 8000x5000
+  // The pixel-count ceiling below is a backstop against truly extreme files
+  // (multi-hundred-megapixel scans), not a guess at what "big" means for
+  // ordinary product photography — that guessing is what the gate above is
+  // for instead.
+  const MAX_TIFF_PIXELS = 150_000_000; // ~150MP
   async function convertTiff(file) {
     if (typeof UTIF === 'undefined') {
       throw new Error('TIFF support did not load — check your connection and try again.');
@@ -692,15 +721,18 @@
       throw new Error('This TIFF is ' + rawW + '×' + rawH +
         ' (' + Math.round(rawW * rawH / 1e6) + ' megapixels) — too large to convert in the browser. Downsize or re-save it at a smaller resolution first.');
     }
-    UTIF.decodeImage(buf, ifd);
-    const rgba = UTIF.toRGBA8(ifd);
-    const canvas = document.createElement('canvas');
-    canvas.width = ifd.width; canvas.height = ifd.height;
-    const ctx = canvas.getContext('2d');
-    const imgData = ctx.createImageData(ifd.width, ifd.height);
-    imgData.data.set(rgba);
-    ctx.putImageData(imgData, 0, 0);
-    return canvas;
+    return heavyGate(() => {
+      UTIF.decodeImage(buf, ifd);
+      let rgba = UTIF.toRGBA8(ifd);
+      const canvas = document.createElement('canvas');
+      canvas.width = ifd.width; canvas.height = ifd.height;
+      const ctx = canvas.getContext('2d');
+      const imgData = ctx.createImageData(ifd.width, ifd.height);
+      imgData.data.set(rgba);
+      rgba = null; // the pixel data now lives in imgData; no need for two copies
+      ctx.putImageData(imgData, 0, 0);
+      return canvas;
+    });
   }
 
   // PSDs can carry dozens of layers, adjustment layers and effects with no
@@ -715,9 +747,11 @@
       throw new Error('PSD support did not load — check your connection and try again.');
     }
     const buf = await file.arrayBuffer();
-    const psd = window.__agPsdReadPsd(buf);
-    if (!psd || !psd.canvas) throw new Error('This PSD has no flattened image to convert.');
-    return psd.canvas;
+    return heavyGate(async () => {
+      const psd = window.__agPsdReadPsd(buf);
+      if (!psd || !psd.canvas) throw new Error('This PSD has no flattened image to convert.');
+      return psd.canvas;
+    });
   }
 
   // Keyed by file so a source decoded twice (bulk pre-check, then export)
@@ -747,7 +781,7 @@
     if (typeof window['jpeg-js'] === 'undefined' || typeof window['jpeg-js'].decode !== 'function') {
       return Promise.reject(new Error('CMYK JPEG support did not load — check your connection and try again.'));
     }
-    return file.arrayBuffer().then(buf => {
+    return file.arrayBuffer().then(buf => heavyGate(() => {
       const raw = window['jpeg-js'].decode(new Uint8Array(buf), { useTArray: true });
       const canvas = document.createElement('canvas');
       canvas.width = raw.width; canvas.height = raw.height;
@@ -755,7 +789,7 @@
       const imgData = new ImageData(new Uint8ClampedArray(raw.data), raw.width, raw.height);
       ctx.putImageData(imgData, 0, 0);
       return canvas;
-    });
+    }));
   }
 
   // A file's name and MIME type are just labels a browser or OS attached —
