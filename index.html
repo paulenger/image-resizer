@@ -605,6 +605,7 @@
   let bulkQueue = []; // { file, status, kind, blob, resultFileName, plannedName }
   let bulkResults = [];
   let bulkRunning = false, bulkCancel = false;
+  let lastZipUrl = null;
 
   // Fit handling
   let fitMode = 'auto';           // 'auto' | 'pad' | 'cover'
@@ -2250,10 +2251,20 @@
       const stem = keepOriginal
         ? 'converted_' + fmt($('outputFormat').value).ext
         : 'resized_' + tw + 'x' + th;
+      // A large batch's ZIP can be hundreds of MB to a few GB, and the browser
+      // writes a `download`-attribute click to disk asynchronously — there is
+      // no event that says when it actually finishes. Revoking this URL on a
+      // short fixed timer (the previous approach used 10s) pulled the rug out
+      // from under downloads that legitimately took longer than that,
+      // surfacing as a generic, misleading "check your connection" failure
+      // for what is a purely local, no-network blob download. The previous
+      // ZIP's URL is only revoked once a new one exists — by then its
+      // download is certainly done, however long it actually took.
+      if (lastZipUrl) URL.revokeObjectURL(lastZipUrl);
       const url = URL.createObjectURL(zipBlob);
+      lastZipUrl = url;
       const a = document.createElement('a');
       a.href = url; a.download = stem + '_' + usable.length + 'images.zip'; a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
       showStatus(skipped.length
         ? 'ZIP downloaded with ' + usable.length + ' images. ' + skipped.length +
           (skipped.length === 1 ? ' could not be read and was skipped: ' : ' could not be read and were skipped: ') +
