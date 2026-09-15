@@ -736,6 +736,101 @@
     });
   }
 
+  // ag-psd refuses to open a PSD at all unless its header color mode is
+  // Bitmap, Grayscale, Indexed or RGB — CMYK (common out of print/prepress
+  // tools like the product photography this tool processes) is rejected up
+  // front with "Color mode not supported: CMYK", even though ag-psd's own
+  // composite-image decoder already contains full CMYK→RGB handling; that
+  // code just sits behind the same allowlist and is unreachable. Rather than
+  // fork ag-psd for one color mode, the flattened (merged) image section is
+  // parsed by hand here for that one case, reusing the exact channel math
+  // ag-psd's decoder uses internally (Photoshop stores CMYK channels
+  // inverted, i.e. 255 = no ink, which is why the conversion below multiplies
+  // the raw stored bytes directly rather than subtracting from 255 first).
+  function unpackBitsRow(bytes, offset, outLen) {
+    const out = new Uint8Array(outLen);
+    let i = offset, o = 0;
+    while (o < outLen) {
+      const n = (bytes[i++] << 24) >> 24; // sign-extend the packed-bits header byte
+      if (n >= 0) {
+        for (let k = 0; k <= n && o < outLen; k++) out[o++] = bytes[i++];
+      } else if (n !== -128) {
+        const v = bytes[i++];
+        for (let k = 0; k < 1 - n && o < outLen; k++) out[o++] = v;
+      }
+    }
+    return { out, next: i };
+  }
+
+  function decodeCmykPsdComposite(buf) {
+    const view = new DataView(buf);
+    let off = 0;
+    const u8 = () => view.getUint8(off++);
+    const u16 = () => { const v = view.getUint16(off); off += 2; return v; };
+    const u32 = () => { const v = view.getUint32(off); off += 4; return v; };
+
+    if (String.fromCharCode(u8(), u8(), u8(), u8()) !== '8BPS') throw new Error('Not a PSD file.');
+    const version = u16();
+    if (version !== 1 && version !== 2) throw new Error('Unsupported PSD version.');
+    off += 6; // reserved
+    const channels = u16();
+    const height = u32();
+    const width = u32();
+    const depth = u16();
+    const colorMode = u16();
+    if (colorMode !== 4) throw new Error('Not a CMYK PSD.');
+    if (depth !== 8) throw new Error('Only 8-bit CMYK PSDs are supported.');
+    if (channels !== 4 && channels !== 5) throw new Error('Unsupported CMYK channel count: ' + channels);
+    const large = version === 2; // PSB: only the merged image's per-row RLE counts widen to 4 bytes
+
+    // Each length must be read into a variable before adding it to `off` —
+    // `off += u32()` evaluates `off`'s old value before u32()'s internal
+    // `off += 4` side effect runs, silently discarding that advancement.
+    const colorModeDataLen = u32(); off += colorModeDataLen;         // color mode data section
+    const imageResourcesLen = u32(); off += imageResourcesLen;       // image resources section
+    const layerMaskInfoLen = u32(); off += layerMaskInfoLen;         // layer and mask information (outer length is always 4 bytes)
+
+    const compression = u16();
+    const planeSize = width * height;
+    const planes = [];
+    if (compression === 0) { // raw
+      for (let c = 0; c < channels; c++) {
+        planes.push(new Uint8Array(buf, off, planeSize));
+        off += planeSize;
+      }
+    } else if (compression === 1) { // RLE (PackBits)
+      off += channels * height * (large ? 4 : 2); // skip per-row byte counts; PackBits is self-terminating
+      const bytes = new Uint8Array(buf, off);
+      let bi = 0;
+      for (let c = 0; c < channels; c++) {
+        const plane = new Uint8Array(planeSize);
+        for (let r = 0; r < height; r++) {
+          const { out, next } = unpackBitsRow(bytes, bi, width);
+          plane.set(out, r * width);
+          bi = next;
+        }
+        planes.push(plane);
+      }
+    } else {
+      throw new Error('Unsupported PSD compression: ' + compression);
+    }
+
+    const [C, M, Y, K, A] = planes;
+    const rgba = new Uint8ClampedArray(planeSize * 4);
+    for (let i = 0; i < planeSize; i++) {
+      const k = K[i];
+      rgba[i * 4] = (C[i] * k) / 255;
+      rgba[i * 4 + 1] = (M[i] * k) / 255;
+      rgba[i * 4 + 2] = (Y[i] * k) / 255;
+      rgba[i * 4 + 3] = A ? 255 - A[i] : 255;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width; canvas.height = height;
+    canvas.getContext('2d').putImageData(new ImageData(rgba, width, height), 0, 0);
+    return canvas;
+  }
+
   // PSDs can carry dozens of layers, adjustment layers and effects with no
   // single "real" pixel grid — the flattened composite ag-psd builds is the
   // one raster every PSD already carries for exactly this purpose (it is what
@@ -749,9 +844,16 @@
     }
     const buf = await file.arrayBuffer();
     return heavyGate(async () => {
-      const psd = window.__agPsdReadPsd(buf);
-      if (!psd || !psd.canvas) throw new Error('This PSD has no flattened image to convert.');
-      return psd.canvas;
+      try {
+        const psd = window.__agPsdReadPsd(buf);
+        if (!psd || !psd.canvas) throw new Error('This PSD has no flattened image to convert.');
+        return psd.canvas;
+      } catch (e) {
+        if (/color mode not supported:\s*cmyk/i.test(e.message || '')) {
+          return decodeCmykPsdComposite(buf);
+        }
+        throw e;
+      }
     });
   }
 
