@@ -822,7 +822,14 @@
       rgba[i * 4] = (C[i] * k) / 255;
       rgba[i * 4 + 1] = (M[i] * k) / 255;
       rgba[i * 4 + 2] = (Y[i] * k) / 255;
-      rgba[i * 4 + 3] = A ? 255 - A[i] : 255;
+      // Unlike the CMYK ink channels (inverted so 255 = no ink, matching
+      // every other channel's white-is-255 convention), the alpha channel
+      // is stored as ordinary opacity — 255 = opaque — same as any other
+      // PSD color mode. Inverting it here (as ag-psd's own CMYK helper
+      // does, but only for its narrower alpha-less 4-channel case) turns
+      // every opaque product pixel transparent and leaves only the plain
+      // white backdrop opaque, which is exactly backwards.
+      rgba[i * 4 + 3] = A ? A[i] : 255;
     }
 
     const canvas = document.createElement('canvas');
