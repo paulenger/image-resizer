@@ -591,6 +591,20 @@
   window.__agPsdReady = import('https://cdn.jsdelivr.net/npm/ag-psd@31.0.2/+esm')
     .then(m => { window.__agPsdReadPsd = m.readPsd; })
     .catch(() => {});
+
+  // lcms-wasm (a WASM build of Little-CMS, the reference open-source ICC
+  // color engine) does real, profile-accurate CMYK->sRGB conversion for
+  // CMYK PSDs that embed an ICC profile — as most print/prepress exports
+  // do — instead of the plain ink-arithmetic approximation used when one
+  // isn't present. It ships as a real ES module (unlike ag-psd, so no
+  // +esm transform needed) and resolves its .wasm file relative to its
+  // own import.meta.url, which a CDN import satisfies automatically.
+  window.__lcmsReady = import('https://cdn.jsdelivr.net/npm/lcms-wasm@1.0.5/dist/lcms.js')
+    .then(async m => {
+      window.__lcms = await m.instantiate();
+      window.__lcmsTypes = m;
+    })
+    .catch(() => {});
 </script>
 <script>
   // ── State ──────────────────────────────────────────────────────────────────
@@ -762,6 +776,67 @@
     return { out, next: i };
   }
 
+  // Image resource blocks: '8BIM' signature (4) + id (2) + Pascal string
+  // name, padded so (length-byte + name) is even, + size (4) + data,
+  // padded to even. Resource 1039 is the embedded ICC profile — grabbing
+  // it here (rather than a second pass) means the section only needs to
+  // be walked once.
+  function findIccProfile(view, start, end) {
+    let off = start;
+    let iccBytes = null;
+    while (off < end) {
+      off += 4; // '8BIM'
+      const id = view.getUint16(off); off += 2;
+      const nameLen = view.getUint8(off); off += 1;
+      off += nameLen;
+      if ((nameLen + 1) % 2 !== 0) off += 1;
+      const size = view.getUint32(off); off += 4;
+      const dataStart = off;
+      off += size;
+      if (size % 2 !== 0) off += 1;
+      if (id === 1039) iccBytes = new Uint8Array(view.buffer, view.byteOffset + dataStart, size);
+    }
+    return iccBytes;
+  }
+
+  // Plain ink arithmetic can't know that e.g. a print house's particular
+  // "rich black" (unequal C/M/Y under K, common for a deep neutral black)
+  // is supposed to render as neutral gray — only the color profile that
+  // ink recipe was built against encodes that. When the PSD embeds one
+  // (id 1039 above), lcms-wasm — a WASM build of Little-CMS, the same
+  // open-source color engine behind ImageMagick/GIMP color management —
+  // runs the real profile-accurate transform to sRGB instead.
+  function cmykIccToRgb(iccBytes, C, M, Y, K, planeSize) {
+    const lcms = window.__lcms;
+    const { TYPE_CMYK_8, TYPE_RGB_8, INTENT_RELATIVE_COLORIMETRIC, cmsFLAGS_BLACKPOINTCOMPENSATION } = window.__lcmsTypes;
+    const inputProfile = lcms.cmsOpenProfileFromMem(iccBytes, iccBytes.length);
+    if (!inputProfile) throw new Error("Could not open the PSD's embedded ICC profile.");
+    const outputProfile = lcms.cmsCreate_sRGBProfile();
+    const transform = lcms.cmsCreateTransform(
+      inputProfile, TYPE_CMYK_8, outputProfile, TYPE_RGB_8,
+      INTENT_RELATIVE_COLORIMETRIC, cmsFLAGS_BLACKPOINTCOMPENSATION
+    );
+    // Little-CMS refcounts a profile once it's built into a transform, so
+    // both profiles can be released right away regardless of what else
+    // fails below.
+    lcms.cmsCloseProfile(inputProfile);
+    lcms.cmsCloseProfile(outputProfile);
+    if (!transform) throw new Error('Could not build a CMYK -> sRGB color transform.');
+    // PSD stores ink channels inverted (255 = no ink); lcms wants ordinary
+    // ink amounts (0 = no ink), same as every other consumer of these
+    // planes in this file.
+    const cmyk = new Uint8Array(planeSize * 4);
+    for (let i = 0; i < planeSize; i++) {
+      cmyk[i * 4] = 255 - C[i];
+      cmyk[i * 4 + 1] = 255 - M[i];
+      cmyk[i * 4 + 2] = 255 - Y[i];
+      cmyk[i * 4 + 3] = 255 - K[i];
+    }
+    const rgb = lcms.cmsDoTransform(transform, cmyk, planeSize);
+    lcms.cmsDeleteTransform(transform);
+    return rgb;
+  }
+
   function decodeCmykPsdComposite(buf) {
     const view = new DataView(buf);
     let off = 0;
@@ -787,7 +862,10 @@
     // `off += u32()` evaluates `off`'s old value before u32()'s internal
     // `off += 4` side effect runs, silently discarding that advancement.
     const colorModeDataLen = u32(); off += colorModeDataLen;         // color mode data section
-    const imageResourcesLen = u32(); off += imageResourcesLen;       // image resources section
+    const imageResourcesLen = u32();                                 // image resources section
+    const imageResourcesStart = off;                                 // off is now just past the length field, i.e. the section's own start
+    const iccProfileBytes = findIccProfile(view, imageResourcesStart, imageResourcesStart + imageResourcesLen);
+    off = imageResourcesStart + imageResourcesLen;
     const layerMaskInfoLen = u32(); off += layerMaskInfoLen;         // layer and mask information (outer length is always 4 bytes)
 
     const compression = u16();
@@ -816,12 +894,28 @@
     }
 
     const [C, M, Y, K, A] = planes;
+
+    let rgb = null; // interleaved RGB from a real ICC transform, if one was possible
+    if (iccProfileBytes && window.__lcms && window.__lcmsTypes) {
+      try {
+        rgb = cmykIccToRgb(iccProfileBytes, C, M, Y, K, planeSize);
+      } catch (e) {
+        rgb = null; // fall through to the plain-math approximation below
+      }
+    }
+
     const rgba = new Uint8ClampedArray(planeSize * 4);
     for (let i = 0; i < planeSize; i++) {
-      const k = K[i];
-      rgba[i * 4] = (C[i] * k) / 255;
-      rgba[i * 4 + 1] = (M[i] * k) / 255;
-      rgba[i * 4 + 2] = (Y[i] * k) / 255;
+      if (rgb) {
+        rgba[i * 4] = rgb[i * 3];
+        rgba[i * 4 + 1] = rgb[i * 3 + 1];
+        rgba[i * 4 + 2] = rgb[i * 3 + 2];
+      } else {
+        const k = K[i];
+        rgba[i * 4] = (C[i] * k) / 255;
+        rgba[i * 4 + 1] = (M[i] * k) / 255;
+        rgba[i * 4 + 2] = (Y[i] * k) / 255;
+      }
       // Unlike the CMYK ink channels (inverted so 255 = no ink, matching
       // every other channel's white-is-255 convention), the alpha channel
       // is stored as ordinary opacity — 255 = opaque — same as any other
@@ -867,6 +961,10 @@
   // directly instead of round-tripped through a PNG blob and re-decoded.
   async function convertPsd(file) {
     if (window.__agPsdReady) { try { await window.__agPsdReady; } catch (e) { /* handled below */ } }
+    // lcms-wasm is only needed for the CMYK fallback below, and only when
+    // that PSD actually embeds an ICC profile — so a slow or failed load
+    // here should never block a normal (non-CMYK) PSD from converting.
+    if (window.__lcmsReady) { try { await window.__lcmsReady; } catch (e) { /* handled below */ } }
     if (typeof window.__agPsdReadPsd !== 'function') {
       throw new Error('PSD support did not load — check your connection and try again.');
     }
