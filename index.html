@@ -832,6 +832,27 @@
       rgba[i * 4 + 3] = A ? A[i] : 255;
     }
 
+    // A merged image with real transparency (soft shadows, feathered
+    // cutouts, anti-aliased edges around small hardware) stores each
+    // partially-transparent pixel's color pre-blended against a white
+    // matte — Photoshop has to bake *some* RGB into that pixel even where
+    // alpha is low, and it picks white. Left alone, every such pixel reads
+    // lighter/washed out than its true color (a visible white fringe on
+    // any edge or shadow). Dividing back out by alpha recovers the true
+    // color; fully opaque/transparent pixels have nothing to correct.
+    if (A) {
+      for (let i = 0; i < planeSize; i++) {
+        const a = rgba[i * 4 + 3];
+        if (a !== 0 && a !== 255) {
+          const ra = 255 / a;
+          const invA = 255 * (1 - ra);
+          rgba[i * 4] = rgba[i * 4] * ra + invA;
+          rgba[i * 4 + 1] = rgba[i * 4 + 1] * ra + invA;
+          rgba[i * 4 + 2] = rgba[i * 4 + 2] * ra + invA;
+        }
+      }
+    }
+
     const canvas = document.createElement('canvas');
     canvas.width = width; canvas.height = height;
     canvas.getContext('2d').putImageData(new ImageData(rgba, width, height), 0, 0);
